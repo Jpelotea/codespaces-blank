@@ -1,0 +1,7 @@
+{
+  "name": "AI Job Application Copilot",
+  "description": "Tailored job-fit analysis, resume content, cover letters, application tracking, and interview prep for remote VA, BizOps, and Executive Assistant roles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
