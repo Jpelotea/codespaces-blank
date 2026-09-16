@@ -5,11 +5,36 @@ import {
   InterviewPrepPlan,
   FollowUpDraft
 } from '../types';
-import { auth, loginAsGuest } from '../lib/firebase';
+import { auth } from '../lib/firebase';
+
+const API_TIMEOUT_MS = 115 * 1000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  externalSignal?: AbortSignal,
+  timeoutMs: number = API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(new Error('Request timed out')), timeoutMs);
+  const abortExternalRequest = () => controller.abort(externalSignal?.reason);
+
+  if (externalSignal) {
+    if (externalSignal.aborted) abortExternalRequest();
+    else externalSignal.addEventListener('abort', abortExternalRequest, { once: true });
+  }
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortExternalRequest);
+  }
+}
 
 export async function checkServerHealth(): Promise<{ status: string; hasGeminiKey: boolean }> {
   try {
-    const res = await fetch('/api/health');
+    const res = await fetchWithTimeout('/api/health', {}, undefined, 10000);
     if (!res.ok) throw new Error('Health check failed');
     return await res.json();
   } catch (err) {
@@ -19,27 +44,23 @@ export async function checkServerHealth(): Promise<{ status: string; hasGeminiKe
 }
 
 /**
- * Ensures user has an active Firebase Auth session (signing in anonymously if needed)
- * and retrieves a valid JWT ID Token for secure backend API calls.
+ * Retrieves a valid JWT ID Token only for authenticated users.
+ * Guest sessions are intentionally not upgraded to anonymous API access.
  */
 async function getAuthHeader(): Promise<Record<string, string>> {
   try {
-    let user = auth.currentUser;
-    if (!user) {
-      try {
-        user = await loginAsGuest();
-      } catch (err) {
-        console.warn('Could not establish guest auth session:', err);
-      }
+    const user = auth.currentUser;
+    if (!user || user.isAnonymous) {
+      console.warn('No persistent authenticated Firebase user is available for API access.');
+      return {};
     }
-    if (user) {
-      const token = await user.getIdToken();
-      return { Authorization: `Bearer ${token}` };
-    }
+
+    const token = await user.getIdToken();
+    return { Authorization: `Bearer ${token}` };
   } catch (err) {
     console.warn('Failed to retrieve authentication token for API request:', err);
+    return {};
   }
-  return {};
 }
 
 export async function analyzeJobFit(
@@ -50,7 +71,7 @@ export async function analyzeJobFit(
   signal?: AbortSignal
 ): Promise<JobFitAnalysis> {
   const authHeader = await getAuthHeader();
-  const res = await fetch('/api/analyze-job', {
+  const res = await fetchWithTimeout('/api/analyze-job', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -80,7 +101,7 @@ export async function generateTailoredMaterials(
   signal?: AbortSignal
 ): Promise<TailoredMaterials> {
   const authHeader = await getAuthHeader();
-  const res = await fetch('/api/generate-materials', {
+  const res = await fetchWithTimeout('/api/generate-materials', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -111,7 +132,7 @@ export async function generateInterviewPrep(
   signal?: AbortSignal
 ): Promise<InterviewPrepPlan> {
   const authHeader = await getAuthHeader();
-  const res = await fetch('/api/interview-prep', {
+  const res = await fetchWithTimeout('/api/interview-prep', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -143,7 +164,7 @@ export async function generateFollowUpDraft(
   signal?: AbortSignal
 ): Promise<FollowUpDraft> {
   const authHeader = await getAuthHeader();
-  const res = await fetch('/api/followup-draft', {
+  const res = await fetchWithTimeout('/api/followup-draft', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

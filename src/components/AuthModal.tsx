@@ -150,7 +150,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {mode === 'reset' && 'Reset your password'}
           </h3>
           <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            Access your private Verified Vault, synchronized applications pipeline, and tailored materials on any device.
+            Access your private Verified Vault, synchronized applications pipeline, and tailored materials on any device. Guest mode is temporary and not synced to a permanent account.
           </p>
         </div>
 
@@ -359,7 +359,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               disabled={loading}
               className="text-[11px] text-slate-400 hover:text-slate-600 transition underline underline-offset-2 cursor-pointer"
             >
-              Or explore instantly as a Guest
+              Or explore as a temporary Guest session
             </button>
           </div>
         </div>

@@ -86,7 +86,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Status Indicators & Auth Controls */}
           <div className="flex items-center gap-3">
             {/* Cloud Sync Indicator */}
-            {currentUser && (
+            {currentUser && !isGuest && (
               <div 
                 className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200"
                 title={isSyncing ? "Saving to your cloud database..." : "All your data is saved in Firebase cloud"}
@@ -147,9 +147,9 @@ export const Header: React.FC<HeaderProps> = ({
                     <div className="px-4 py-2 border-b border-slate-100">
                       <div className="text-xs font-bold text-slate-900">{userDisplayName}</div>
                       <div className="text-[11px] text-slate-500 truncate">{currentUser.email || 'Signed in via Guest ID'}</div>
-                      <div className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md w-fit">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                        <span>Firebase Cloud Active</span>
+                      <div className={`mt-1 flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md w-fit ${isGuest ? 'text-amber-800 bg-amber-50' : 'text-emerald-700 bg-emerald-50'}`}>
+                        <CheckCircle2 className={`w-3 h-3 ${isGuest ? 'text-amber-600' : 'text-emerald-600'}`} />
+                        <span>{isGuest ? 'Temporary preview only' : 'Firebase Cloud Active'}</span>
                       </div>
                     </div>
 

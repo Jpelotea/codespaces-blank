@@ -29,8 +29,13 @@ import {
 } from './lib/firebase';
 import { ShieldCheck, Cloud, UserCheck, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
 
-const getProfileStorageKey = (uid?: string | null) => uid ? `ai_job_copilot_profile_${uid}` : 'ai_job_copilot_profile_guest';
-const getAppsStorageKey = (uid?: string | null) => uid ? `ai_job_copilot_apps_${uid}` : 'ai_job_copilot_apps_guest';
+const getProfileStorageKey = (uid?: string | null) => `ai_job_copilot_profile_${uid ?? 'guest'}`;
+const getAppsStorageKey = (uid?: string | null) => `ai_job_copilot_apps_${uid ?? 'guest'}`;
+
+const clearSensitiveStorage = (uid?: string | null) => {
+  localStorage.removeItem(getProfileStorageKey(uid));
+  localStorage.removeItem(getAppsStorageKey(uid));
+};
 
 export default function App() {
   // Navigation State
@@ -47,26 +52,10 @@ export default function App() {
   const [hasGeminiKey, setHasGeminiKey] = useState<boolean>(true);
 
   // User Profile state
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem(getProfileStorageKey(null));
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to load local profile', e);
-    }
-    return INITIAL_USER_PROFILE;
-  });
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => INITIAL_USER_PROFILE);
 
   // Applications pipeline state
-  const [applications, setApplications] = useState<ApplicationRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem(getAppsStorageKey(null));
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to load local applications', e);
-    }
-    return INITIAL_SAMPLE_APPLICATIONS;
-  });
+  const [applications, setApplications] = useState<ApplicationRecord[]>(() => INITIAL_SAMPLE_APPLICATIONS);
 
   // Current active job & analysis selected for cross-tab workflows
   const [activeJob, setActiveJob] = useState<JobPosting | null>(SAMPLE_JOB_PRESETS[0]);
@@ -81,32 +70,40 @@ export default function App() {
 
   // Listen to Firebase Auth state
   useEffect(() => {
+    let authChangeId = 0;
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      const changeId = ++authChangeId;
       setCurrentUser(user);
       setAuthLoading(false);
 
-      if (user) {
+      if (user && !user.isAnonymous) {
         setIsSyncing(true);
         try {
-          // Sync workspace from Firestore
+          // Sync workspace from Firestore for authenticated accounts only.
           const { profile, applications: userApps } = await initializeUserWorkspace(user, true);
+          if (changeId !== authChangeId) return;
+
           setUserProfile(profile);
           setApplications(userApps.length > 0 ? userApps : INITIAL_SAMPLE_APPLICATIONS);
-          localStorage.setItem(getProfileStorageKey(user.uid), JSON.stringify(profile));
-          localStorage.setItem(getAppsStorageKey(user.uid), JSON.stringify(userApps));
+          clearSensitiveStorage(user.uid);
         } catch (err) {
           console.error('Error syncing user workspace from Firestore:', err);
         } finally {
-          setIsSyncing(false);
+          if (changeId === authChangeId) setIsSyncing(false);
         }
       } else {
-        // User logged out: restore guest sandbox defaults, isolating prior user data
+        // Guest sessions and logged-out state use only the privacy-safe preview sandbox.
+        clearSensitiveStorage(user?.uid);
         setUserProfile(INITIAL_USER_PROFILE);
         setApplications(INITIAL_SAMPLE_APPLICATIONS);
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      authChangeId += 1;
+      unsubscribe();
+    };
   }, []);
 
   // Handler: Save role to tracker & Firestore
@@ -115,24 +112,16 @@ export default function App() {
     analysis?: JobFitAnalysis, 
     materials?: TailoredMaterials
   ) => {
-    let recordToSave: ApplicationRecord;
-
-    setApplications(prev => {
-      const existingIndex = prev.findIndex(a => a.job.title === job.title && a.job.company === job.company);
-      let updated: ApplicationRecord[];
-
-      if (existingIndex >= 0) {
-        recordToSave = {
-          ...prev[existingIndex],
-          fitScore: analysis?.overallScore || prev[existingIndex].fitScore,
-          fitAnalysis: analysis || prev[existingIndex].fitAnalysis,
-          materials: materials || prev[existingIndex].materials,
+    const existingIndex = applications.findIndex(a => a.job.title === job.title && a.job.company === job.company);
+    const recordToSave: ApplicationRecord = existingIndex >= 0
+      ? {
+          ...applications[existingIndex],
+          fitScore: analysis?.overallScore || applications[existingIndex].fitScore,
+          fitAnalysis: analysis || applications[existingIndex].fitAnalysis,
+          materials: materials || applications[existingIndex].materials,
           updatedAt: new Date().toISOString()
-        };
-        updated = [...prev];
-        updated[existingIndex] = recordToSave;
-      } else {
-        recordToSave = {
+        }
+      : {
           id: `app-${Date.now()}`,
           job,
           status: 'Ready to Apply',
@@ -145,18 +134,21 @@ export default function App() {
           notes: `Analyzed with ${analysis?.overallScore || 90}% match score.`,
           updatedAt: new Date().toISOString()
         };
-        updated = [recordToSave, ...prev];
+    setApplications(prev => {
+      const currentIndex = prev.findIndex(a => a.id === recordToSave.id);
+      if (currentIndex >= 0) {
+        const updated = [...prev];
+        updated[currentIndex] = recordToSave;
+        return updated;
       }
-
-      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
-      return updated;
+      return [recordToSave, ...prev];
     });
 
     setActiveJob(job);
     if (analysis) setActiveAnalysis(analysis);
 
     // Persist to Firestore if user is authenticated
-    if (currentUser) {
+    if (currentUser && !currentUser.isAnonymous) {
       setIsSyncing(true);
       try {
         await saveApplicationToFirestore(currentUser.uid, recordToSave!);
@@ -170,24 +162,17 @@ export default function App() {
 
   // Handler: Update application status with dateApplied automation
   const handleUpdateApplicationStatus = async (id: string, newStatus: ApplicationStatus) => {
-    let updatedRecord: ApplicationRecord | null = null;
+    const existing = applications.find(a => a.id === id);
+    if (!existing) return;
+    const updatedRecord: ApplicationRecord = {
+      ...existing,
+      status: newStatus,
+      dateApplied: newStatus === 'Applied' && !existing.dateApplied ? new Date().toISOString().split('T')[0] : existing.dateApplied,
+      updatedAt: new Date().toISOString()
+    };
+    setApplications(prev => prev.map(a => a.id === id ? updatedRecord : a));
 
-    setApplications(prev => {
-      const updated = prev.map(a => {
-        if (a.id !== id) return a;
-        updatedRecord = {
-          ...a,
-          status: newStatus,
-          dateApplied: newStatus === 'Applied' && !a.dateApplied ? new Date().toISOString().split('T')[0] : a.dateApplied,
-          updatedAt: new Date().toISOString()
-        };
-        return updatedRecord;
-      });
-      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
-      return updated;
-    });
-
-    if (currentUser && updatedRecord) {
+    if (currentUser && !currentUser.isAnonymous && updatedRecord) {
       setIsSyncing(true);
       try {
         await saveApplicationToFirestore(currentUser.uid, updatedRecord);
@@ -203,11 +188,10 @@ export default function App() {
   const handleDeleteApplication = async (id: string) => {
     setApplications(prev => {
       const updated = prev.filter(a => a.id !== id);
-      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
       return updated;
     });
 
-    if (currentUser) {
+    if (currentUser && !currentUser.isAnonymous) {
       setIsSyncing(true);
       try {
         await deleteApplicationFromFirestore(currentUser.uid, id);
@@ -228,27 +212,18 @@ export default function App() {
 
   // Handler: Update notes and next action
   const handleUpdateNotes = async (id: string, notes: string, nextActionDate?: string, nextActionNote?: string) => {
-    let modifiedRecord: ApplicationRecord | null = null;
+    const existing = applications.find(a => a.id === id);
+    if (!existing) return;
+    const modifiedRecord: ApplicationRecord = {
+      ...existing,
+      notes,
+      nextFollowUpDate: nextActionDate || existing.nextFollowUpDate,
+      nextActionNote: nextActionNote || existing.nextActionNote,
+      updatedAt: new Date().toISOString()
+    };
+    setApplications(prev => prev.map(a => a.id === id ? modifiedRecord : a));
 
-    setApplications(prev => {
-      const updated = prev.map(a => {
-        if (a.id === id) {
-          modifiedRecord = {
-            ...a,
-            notes,
-            nextFollowUpDate: nextActionDate || a.nextFollowUpDate,
-            nextActionNote: nextActionNote || a.nextActionNote,
-            updatedAt: new Date().toISOString()
-          };
-          return modifiedRecord;
-        }
-        return a;
-      });
-      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
-      return updated;
-    });
-
-    if (currentUser && modifiedRecord) {
+    if (currentUser && !currentUser.isAnonymous && modifiedRecord) {
       setIsSyncing(true);
       try {
         await saveApplicationToFirestore(currentUser.uid, modifiedRecord);
@@ -264,11 +239,10 @@ export default function App() {
   const handleUpdateApplication = async (updatedApp: ApplicationRecord) => {
     setApplications(prev => {
       const updated = prev.map(a => a.id === updatedApp.id ? { ...updatedApp, updatedAt: new Date().toISOString() } : a);
-      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
       return updated;
     });
 
-    if (currentUser) {
+    if (currentUser && !currentUser.isAnonymous) {
       setIsSyncing(true);
       try {
         await saveApplicationToFirestore(currentUser.uid, { ...updatedApp, updatedAt: new Date().toISOString() });
@@ -283,9 +257,8 @@ export default function App() {
   // Handler: Update profile in state and Firestore
   const handleUpdateProfile = async (updated: UserProfile) => {
     setUserProfile(updated);
-    localStorage.setItem(getProfileStorageKey(currentUser?.uid), JSON.stringify(updated));
 
-    if (currentUser) {
+    if (currentUser && !currentUser.isAnonymous) {
       setIsSyncing(true);
       try {
         await saveUserProfileToFirestore(currentUser.uid, updated);
@@ -300,6 +273,7 @@ export default function App() {
   // Handler: Logout
   const handleLogout = async () => {
     try {
+      clearSensitiveStorage(currentUser?.uid);
       await logoutUser();
     } catch (e) {
       console.error('Logout error:', e);

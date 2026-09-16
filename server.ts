@@ -9,17 +9,64 @@ import {
   sanitizeText, 
   formatUntrustedJobContext 
 } from './src/server/security';
+import {
+  validateJobFitAnalysis,
+  validateTailoredMaterials,
+  validateInterviewPrep,
+  validateFollowUpDraft,
+  validateUserProfile
+} from './src/server/validation';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+const API_TIMEOUT_MS = 2 * 60 * 1000;
+
+// Apply security headers without introducing a middleware dependency.
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store');
+    req.setTimeout(API_TIMEOUT_MS);
+    res.setTimeout(API_TIMEOUT_MS, () => {
+      if (!res.headersSent) {
+        res.status(408).json({ error: 'Request timed out. Please try again.', code: 'REQUEST_TIMEOUT' });
+      }
+    });
+  }
+
+  next();
+});
 
 // Enforce safe payload limit (prevent buffer memory exhaustion)
 app.use(express.json({ limit: '500kb' }));
+app.use((error: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (error?.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'Request payload is too large.',
+      code: 'PAYLOAD_TOO_LARGE'
+    });
+  }
 
-// Apply IP/UID rate limiting to all API endpoints
-app.use('/api', aiRateLimiter);
+  if (error instanceof SyntaxError && (error as SyntaxError & { status?: number; body?: unknown }).status === 400 && 'body' in error) {
+    return res.status(400).json({
+      error: 'Request body must contain valid JSON.',
+      code: 'INVALID_JSON'
+    });
+  }
+
+  return next(error);
+});
 
 // Lazy initialization of Gemini client
 let geminiClient: GoogleGenAI | null = null;
@@ -49,6 +96,46 @@ function cleanJsonText(raw: string): string {
     cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
   }
   return cleaned.trim();
+}
+
+function ensureString(value: unknown, field: string, min = 1, max = 20000): { ok: boolean; error?: string } {
+  if (typeof value !== 'string') {
+    return { ok: false, error: `${field} must be a string` };
+  }
+  if (value.trim().length < min) {
+    return { ok: false, error: `${field} is too short` };
+  }
+  if (value.length > max) {
+    return { ok: false, error: `${field} is too long` };
+  }
+  return { ok: true };
+}
+
+class RequestValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RequestValidationError';
+  }
+}
+
+function validateRequestBody<T>(body: unknown, validator: (value: unknown) => { ok: boolean; error?: string }, fieldName: string): T {
+  const result = validator(body);
+  if (!result.ok) {
+    throw new RequestValidationError(`${fieldName} validation failed: ${result.error || 'invalid input'}`);
+  }
+  return body as T;
+}
+
+function sendInternalError(res: express.Response, error: unknown, publicMessage: string) {
+  if (error instanceof RequestValidationError) {
+    return res.status(400).json({ error: error.message, code: 'INVALID_REQUEST' });
+  }
+
+  const details = error instanceof Error ? error.message : String(error);
+  res.status(500).json({
+    error: process.env.NODE_ENV === 'development' ? details : publicMessage,
+    code: 'INTERNAL_SERVER_ERROR'
+  });
 }
 
 // Resilient AI generation with automatic model fallback and backoff retry
@@ -94,17 +181,35 @@ async function generateWithFallback(
 }
 
 // 1. Analyze Job Fit
-app.post('/api/analyze-job', requireAuth, async (req, res) => {
+app.post('/api/analyze-job', requireAuth, aiRateLimiter, async (req, res) => {
   try {
     const rawDesc = req.body.jobDescription;
     if (!rawDesc || typeof rawDesc !== 'string' || !rawDesc.trim()) {
       return res.status(400).json({ error: 'Job description is required and must be a non-empty string' });
     }
 
-    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Target Role';
-    const company = sanitizeText(req.body.company, 200) || 'Company';
+    const payload = validateRequestBody<Record<string, unknown>>(req.body, (value) => {
+      if (!value || typeof value !== 'object') {
+        return { ok: false, error: 'request body must be an object' };
+      }
+      const body = value as Record<string, unknown>;
+      const checks = [
+        ensureString(body.jobTitle, 'jobTitle', 1, 200),
+        ensureString(body.company, 'company', 1, 200),
+        ensureString(body.jobDescription, 'jobDescription', 20, 12000)
+      ];
+      for (const check of checks) {
+        if (!check.ok) return check;
+      }
+      const profileCheck = validateUserProfile(body.userProfile);
+      if (!profileCheck.ok) return profileCheck;
+      return { ok: true };
+    }, 'job analysis request');
+
+    const jobTitle = sanitizeText(payload['jobTitle'], 200) || 'Target Role';
+    const company = sanitizeText(payload['company'], 200) || 'Company';
     const jobDescription = sanitizeText(rawDesc, 12000);
-    const userProfile = req.body.userProfile || {};
+    const userProfile = ((payload['userProfile'] ?? {}) as Record<string, unknown>);
 
     const ai = getGeminiClient();
     if (ai) {
@@ -120,19 +225,19 @@ Every strength MUST include a status classification: "MATCH" (fully verified evi
 If a requirement is not met by the profile, you MUST classify it as a Gap with an honest, realistic bridge strategy rather than claiming they have it.
 
 --- CANDIDATE VERIFIED PROFILE ---
-Name: ${userProfile.name || 'Candidate'}
-Headline: ${userProfile.headline || ''}
-Experience Summary: ${userProfile.executiveSummary || ''}
-Years Experience: ${userProfile.yearsExperience || 5}
+Name: ${userProfile['name'] || 'Candidate'}
+Headline: ${userProfile['headline'] || ''}
+Experience Summary: ${userProfile['executiveSummary'] || ''}
+Years Experience: ${userProfile['yearsExperience'] || 5}
 
 Verified Work Experience:
-${JSON.stringify(userProfile.workExperiences || [], null, 2)}
+${JSON.stringify(userProfile['workExperiences'] || [], null, 2)}
 
 Verified Skills:
-${JSON.stringify(userProfile.skillCategories || [], null, 2)}
+${JSON.stringify(userProfile['skillCategories'] || [], null, 2)}
 
 Verified Portfolio Projects:
-${JSON.stringify(userProfile.portfolioProjects || [], null, 2)}
+${JSON.stringify(userProfile['portfolioProjects'] || [], null, 2)}
 
 --- TARGET JOB DETAILS ---
 ${untrustedJobBlock}
@@ -177,6 +282,10 @@ Respond strictly with a JSON object matching this TypeScript structure:
       try {
         const text = await generateWithFallback(ai, prompt, 0.2);
         const parsed = JSON.parse(cleanJsonText(text));
+        const jobFitValidation = validateJobFitAnalysis(parsed);
+        if (!jobFitValidation.ok) {
+          throw new Error(jobFitValidation.error || 'Invalid AI job-fit payload');
+        }
         return res.json(parsed);
       } catch (aiError: any) {
         console.warn('[Gemini 503/High Demand Fallback] Running grounded heuristic analyzer:', aiError?.message || aiError);
@@ -184,10 +293,10 @@ Respond strictly with a JSON object matching this TypeScript structure:
     }
 
     // High-fidelity profile-grounded fallback (zero hallucination)
-    const experiences = userProfile.workExperiences || [];
+    const experiences = (userProfile['workExperiences'] as Array<Record<string, unknown>> | undefined) || [];
     const firstExp = experiences[0];
     const secondExp = experiences[1];
-    const firstProject = userProfile.portfolioProjects?.[0];
+    const firstProject = ((userProfile['portfolioProjects'] as Array<Record<string, unknown>> | undefined) || [])[0];
 
     const fallbackStrengths = [
       {
@@ -226,10 +335,10 @@ Respond strictly with a JSON object matching this TypeScript structure:
       },
       strengths: fallbackStrengths,
       gaps: fallbackGaps,
-      recommendedProjects: (userProfile.portfolioProjects || []).slice(0, 2).map((p: any) => ({
-        projectId: p.id,
-        projectTitle: p.title,
-        whyRelevant: `Demonstrates verified real-world automation, time savings (${p.verifiedImpactMetric || '9+ hrs/week'}), and operational rigor.`
+      recommendedProjects: ((userProfile['portfolioProjects'] as Array<Record<string, unknown>> | undefined) || []).slice(0, 2).map((p: Record<string, unknown>) => ({
+        projectId: String(p['id'] || 'project'),
+        projectTitle: String(p['title'] || 'Project'),
+        whyRelevant: `Demonstrates verified real-world automation, time savings (${p['verifiedImpactMetric'] || '9+ hrs/week'}), and operational rigor.`
       })),
       strategicAdvice: [
         `Lead your application for ${company} with your verified AI workflow achievements to stand out as a force multiplier.`,
@@ -238,21 +347,45 @@ Respond strictly with a JSON object matching this TypeScript structure:
       ]
     };
 
+    const fallbackValidation = validateJobFitAnalysis(fallbackAnalysis);
+    if (!fallbackValidation.ok) {
+      return res.status(500).json({ error: fallbackValidation.error || 'Fallback job-fit analysis invalid' });
+    }
+
     return res.json(fallbackAnalysis);
   } catch (error: any) {
     console.error('Error analyzing job:', error);
-    res.status(500).json({ error: error.message || 'Failed to analyze job fit' });
+    sendInternalError(res, error, 'Failed to analyze job fit');
   }
 });
 
 // 2. Generate Tailored Application Materials
-app.post('/api/generate-materials', requireAuth, async (req, res) => {
+app.post('/api/generate-materials', requireAuth, aiRateLimiter, async (req, res) => {
   try {
-    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Role';
-    const company = sanitizeText(req.body.company, 200) || 'Company';
-    const jobDescription = sanitizeText(req.body.jobDescription, 12000);
-    const userProfile = req.body.userProfile || {};
-    const pitchType = sanitizeText(req.body.pitchType, 50) || 'executive_formal';
+    const payload = validateRequestBody<Record<string, unknown>>(req.body, (value) => {
+      if (!value || typeof value !== 'object') {
+        return { ok: false, error: 'request body must be an object' };
+      }
+      const body = value as Record<string, unknown>;
+      const checks = [
+        ensureString(body.jobTitle, 'jobTitle', 1, 200),
+        ensureString(body.company, 'company', 1, 200),
+        ensureString(body.jobDescription, 'jobDescription', 20, 12000),
+        ensureString(body.pitchType, 'pitchType', 1, 50)
+      ];
+      for (const check of checks) {
+        if (!check.ok) return check;
+      }
+      const profileCheck = validateUserProfile(body.userProfile);
+      if (!profileCheck.ok) return profileCheck;
+      return { ok: true };
+    }, 'materials request');
+
+    const jobTitle = sanitizeText(payload['jobTitle'], 200) || 'Role';
+    const company = sanitizeText(payload['company'], 200) || 'Company';
+    const jobDescription = sanitizeText(payload['jobDescription'], 12000);
+    const userProfile = ((payload['userProfile'] ?? {}) as Record<string, unknown>);
+    const pitchType = sanitizeText(payload['pitchType'], 50) || 'executive_formal';
 
     const ai = getGeminiClient();
     if (ai) {
@@ -264,22 +397,22 @@ STRICT INTEGRITY RULE:
 DO NOT INVENT WORK EXPERIENCE, METRICS, CLIENTS, OR QUALIFICATIONS. Every statement must be derived from the candidate's verified profile below.
 
 --- CANDIDATE VERIFIED PROFILE ---
-Name: ${userProfile.name || 'Candidate'}
-Headline: ${userProfile.headline || ''}
-Email: ${userProfile.email || ''}
-Phone: ${userProfile.phone || ''}
-Location: ${userProfile.location || ''}
-Timezone: ${userProfile.timezone || ''}
-Summary: ${userProfile.executiveSummary || ''}
+Name: ${userProfile['name'] || 'Candidate'}
+Headline: ${userProfile['headline'] || ''}
+Email: ${userProfile['email'] || ''}
+Phone: ${userProfile['phone'] || ''}
+Location: ${userProfile['location'] || ''}
+Timezone: ${userProfile['timezone'] || ''}
+Summary: ${userProfile['executiveSummary'] || ''}
 
 Verified Work Experience:
-${JSON.stringify(userProfile.workExperiences || [], null, 2)}
+${JSON.stringify(userProfile['workExperiences'] || [], null, 2)}
 
 Verified Skills:
-${JSON.stringify(userProfile.skillCategories || [], null, 2)}
+${JSON.stringify(userProfile['skillCategories'] || [], null, 2)}
 
 Verified Portfolio Projects:
-${JSON.stringify(userProfile.portfolioProjects || [], null, 2)}
+${JSON.stringify(userProfile['portfolioProjects'] || [], null, 2)}
 
 --- TARGET JOB DETAILS ---
 ${untrustedJobBlock}
@@ -330,6 +463,8 @@ Respond strictly with a JSON object matching this structure:
         const parsed = JSON.parse(cleanJsonText(text));
         parsed.disclaimer = 'Generated strictly from your verified profile vault. Always review, proofread, and verify details before submitting.';
         parsed.generatedAt = new Date().toISOString();
+        const materialsValidation = validateTailoredMaterials(parsed);
+        if (!materialsValidation.ok) throw new Error(materialsValidation.error || 'Invalid AI materials payload');
         return res.json(parsed);
       } catch (aiError: any) {
         console.warn('[Gemini 503/High Demand Fallback] Running grounded materials generator:', aiError?.message || aiError);
@@ -337,14 +472,14 @@ Respond strictly with a JSON object matching this structure:
     }
 
     // Grounded fallback using verified profile
-    const exp1 = userProfile.workExperiences?.[0];
-    const exp2 = userProfile.workExperiences?.[1];
+    const exp1 = ((userProfile['workExperiences'] as Array<Record<string, unknown>> | undefined) || [])[0];
+    const exp2 = ((userProfile['workExperiences'] as Array<Record<string, unknown>> | undefined) || [])[1];
 
     const fallbackMaterials = {
       disclaimer: 'Generated strictly from your verified profile vault. Always review, proofread, and verify details before submitting.',
       generatedAt: new Date().toISOString(),
       resume: {
-        targetedSummary: `Detail-oriented ${jobTitle} with ${userProfile.yearsExperience || 6}+ years of verified remote leadership support. Proven specialist in multi-calendar deconfliction, confidential inbox triage, and building automated operational workflows with AI and Notion. Track record of saving leadership 9+ hours weekly through intelligent systems.`,
+        targetedSummary: `Detail-oriented ${jobTitle} with ${userProfile['yearsExperience'] || 6}+ years of verified remote leadership support. Proven specialist in multi-calendar deconfliction, confidential inbox triage, and building automated operational workflows with AI and Notion. Track record of saving leadership 9+ hours weekly through intelligent systems.`,
         highlightedCoreSkills: [
           'Multi-Timezone Calendar Management',
           'Executive Inbox Triage & Ghostwriting',
@@ -378,8 +513,8 @@ Respond strictly with a JSON object matching this structure:
       },
       coverLetter: {
         pitchType,
-        subjectLine: `Application for ${jobTitle} - ${userProfile.name || 'Candidate'} | Verified Operations & Executive Support`,
-        letterBody: `Dear Hiring Team at ${company},\n\nI am writing to express my strong interest in the ${jobTitle} position. Having spent the past ${userProfile.yearsExperience || 6} years supporting high-growth startup executives and streamlining remote operations, I specialize in eliminating administrative friction and giving leadership their focus back.\n\nIn my recent role at ${exp1?.company || 'Vanguard Tech Partners'}, I served as the direct operational right-hand to our executive leadership team across multiple time zones. Beyond managing complex 24/7 calendar deconfliction and global travel logistics, I architected an automated AI briefing workflow that synthesized 150+ daily communications into a 5-minute morning executive dossier, saving over 9 hours of leadership triage time each week.\n\nWhat excites me most about ${company} is your commitment to high-impact execution. Whether designing seamless Notion SOPs that reduce onboarding cycles or triaging high-stakes VIP correspondence with complete discretion, I treat the role as a proactive partnership rather than passive task-taking.\n\nI would welcome the opportunity to discuss how my verified background in executive leverage, AI-assisted workflows, and remote operations can support your team.\n\nSincerely,\n\n${userProfile.name || 'Candidate'}\n${userProfile.email || ''} | ${userProfile.phone || ''}\n${userProfile.location || 'Remote'}`
+        subjectLine: `Application for ${jobTitle} - ${userProfile['name'] || 'Candidate'} | Verified Operations & Executive Support`,
+        letterBody: `Dear Hiring Team at ${company},\n\nI am writing to express my strong interest in the ${jobTitle} position. Having spent the past ${userProfile['yearsExperience'] || 6} years supporting high-growth startup executives and streamlining remote operations, I specialize in eliminating administrative friction and giving leadership their focus back.\n\nIn my recent role at ${exp1?.['company'] || 'Vanguard Tech Partners'}, I served as the direct operational right-hand to our executive leadership team across multiple time zones. Beyond managing complex 24/7 calendar deconfliction and global travel logistics, I architected an automated AI briefing workflow that synthesized 150+ daily communications into a 5-minute morning executive dossier, saving over 9 hours of leadership triage time each week.\n\nWhat excites me most about ${company} is your commitment to high-impact execution. Whether designing seamless Notion SOPs that reduce onboarding cycles or triaging high-stakes VIP correspondence with complete discretion, I treat the role as a proactive partnership rather than passive task-taking.\n\nI would welcome the opportunity to discuss how my verified background in executive leverage, AI-assisted workflows, and remote operations can support your team.\n\nSincerely,\n\n${userProfile['name'] || 'Candidate'}\n${userProfile['email'] || ''} | ${userProfile['phone'] || ''}\n${userProfile['location'] || 'Remote'}`
       },
       screeningAnswers: [
         {
@@ -400,20 +535,44 @@ Respond strictly with a JSON object matching this structure:
       ]
     };
 
+    const fallbackMaterialsValidation = validateTailoredMaterials(fallbackMaterials);
+    if (!fallbackMaterialsValidation.ok) {
+      return res.status(500).json({ error: fallbackMaterialsValidation.error || 'Fallback materials payload invalid' });
+    }
     return res.json(fallbackMaterials);
   } catch (error: any) {
     console.error('Error generating materials:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate application materials' });
+    sendInternalError(res, error, 'Failed to generate application materials');
   }
 });
 
 // 3. Generate Interview Preparation Guidance
-app.post('/api/interview-prep', requireAuth, async (req, res) => {
+app.post('/api/interview-prep', requireAuth, aiRateLimiter, async (req, res) => {
   try {
-    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Role';
-    const company = sanitizeText(req.body.company, 200) || 'Company';
-    const jobDescription = sanitizeText(req.body.jobDescription, 12000);
-    const userProfile = req.body.userProfile || {};
+    const payload = validateRequestBody<Record<string, unknown>>(req.body, (value) => {
+      if (!value || typeof value !== 'object') return { ok: false, error: 'request body must be an object' };
+      const body = value as Record<string, unknown>;
+      const checks = [
+        ensureString(body.jobTitle, 'jobTitle', 1, 200),
+        ensureString(body.company, 'company', 1, 200),
+        ensureString(body.jobDescription, 'jobDescription', 20, 12000)
+      ];
+      for (const check of checks) {
+        if (!check.ok) return check;
+      }
+      const profileCheck = validateUserProfile(body.userProfile);
+      if (!profileCheck.ok) return profileCheck;
+      if (body.fitAnalysis !== undefined) {
+        const fitCheck = validateJobFitAnalysis(body.fitAnalysis);
+        if (!fitCheck.ok) return fitCheck;
+      }
+      return { ok: true };
+    }, 'interview prep request');
+
+    const jobTitle = sanitizeText(payload.jobTitle, 200) || 'Role';
+    const company = sanitizeText(payload.company, 200) || 'Company';
+    const jobDescription = sanitizeText(payload.jobDescription, 12000);
+    const userProfile = payload.userProfile as Record<string, unknown>;
 
     const ai = getGeminiClient();
     if (ai) {
@@ -424,10 +583,10 @@ Company: ${company}
 
 Candidate's Verified Profile:
 ${JSON.stringify({
-  name: userProfile.name,
-  workExperiences: userProfile.workExperiences,
-  portfolioProjects: userProfile.portfolioProjects,
-  answerBank: userProfile.answerBank
+  name: userProfile['name'],
+  workExperiences: userProfile['workExperiences'],
+  portfolioProjects: userProfile['portfolioProjects'],
+  answerBank: userProfile['answerBank']
 }, null, 2)}
 
 Target Job Details:
@@ -464,6 +623,8 @@ Respond strictly in JSON:
       try {
         const text = await generateWithFallback(ai, prompt, 0.3);
         const parsed = JSON.parse(cleanJsonText(text));
+        const prepValidation = validateInterviewPrep(parsed);
+        if (!prepValidation.ok) throw new Error(prepValidation.error || 'Invalid AI interview prep payload');
         return res.json(parsed);
       } catch (aiError: any) {
         console.warn('[Gemini 503/High Demand Fallback] Running grounded interview prep generator:', aiError?.message || aiError);
@@ -536,22 +697,46 @@ Respond strictly in JSON:
       ]
     };
 
+    const fallbackPrepValidation = validateInterviewPrep(fallbackPrep);
+    if (!fallbackPrepValidation.ok) {
+      return res.status(500).json({ error: fallbackPrepValidation.error || 'Fallback interview prep payload invalid' });
+    }
     return res.json(fallbackPrep);
   } catch (error: any) {
     console.error('Error generating interview prep:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate interview prep' });
+    sendInternalError(res, error, 'Failed to generate interview prep');
   }
 });
 
 // 4. Generate Follow-up Draft
-app.post('/api/followup-draft', requireAuth, async (req, res) => {
+app.post('/api/followup-draft', requireAuth, aiRateLimiter, async (req, res) => {
   try {
-    const stage = sanitizeText(req.body.stage, 100) || 'Post-Application (5-Day)';
-    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Role';
-    const company = sanitizeText(req.body.company, 200) || 'Company';
-    const recipientName = sanitizeText(req.body.recipientName, 100);
-    const customNotes = sanitizeText(req.body.customNotes, 2000);
-    const userProfile = req.body.userProfile || {};
+    const payload = validateRequestBody<Record<string, unknown>>(req.body, (value) => {
+      if (!value || typeof value !== 'object') return { ok: false, error: 'request body must be an object' };
+      const body = value as Record<string, unknown>;
+      const checks = [
+        ensureString(body.stage, 'stage', 1, 100),
+        ensureString(body.jobTitle, 'jobTitle', 1, 200),
+        ensureString(body.company, 'company', 1, 200)
+      ];
+      for (const check of checks) {
+        if (!check.ok) return check;
+      }
+      if (body.recipientName !== undefined && typeof body.recipientName !== 'string') {
+        return { ok: false, error: 'recipientName must be a string' };
+      }
+      if (body.customNotes !== undefined && typeof body.customNotes !== 'string') {
+        return { ok: false, error: 'customNotes must be a string' };
+      }
+      return validateUserProfile(body.userProfile);
+    }, 'follow-up request');
+
+    const stage = sanitizeText(payload.stage, 100) || 'Post-Application (5-Day)';
+    const jobTitle = sanitizeText(payload.jobTitle, 200) || 'Role';
+    const company = sanitizeText(payload.company, 200) || 'Company';
+    const recipientName = sanitizeText(payload.recipientName, 100);
+    const customNotes = sanitizeText(payload.customNotes, 2000);
+    const userProfile = payload.userProfile as Record<string, unknown>;
 
     const ai = getGeminiClient();
     if (ai) {
@@ -573,6 +758,8 @@ Respond strictly with a JSON object:
       try {
         const text = await generateWithFallback(ai, prompt, 0.3);
         const parsed = JSON.parse(cleanJsonText(text));
+        const followUpValidation = validateFollowUpDraft(parsed);
+        if (!followUpValidation.ok) throw new Error(followUpValidation.error || 'Invalid AI follow-up payload');
         return res.json(parsed);
       } catch (aiError: any) {
         console.warn('[Gemini 503/High Demand Fallback] Running grounded follow-up generator:', aiError?.message || aiError);
@@ -591,10 +778,14 @@ Respond strictly with a JSON object:
         : `Hi ${recipientName || 'Hiring Team'},\n\nI hope your week is going well. I wanted to briefly check in regarding my application for the ${jobTitle} position at ${company}, submitted earlier this week.\n\nI remain very excited about the opportunity to bring my verified background in remote executive assistance and workflow automation to your team. I've attached my updated portfolio link for convenience.\n\nLooking forward to hearing from you as next steps develop.\n\nWarm regards,\n${userProfile.name || 'Candidate'}`
     };
 
+    const fallbackValidation = validateFollowUpDraft(fallbackFollowUp);
+    if (!fallbackValidation.ok) {
+      return res.status(500).json({ error: fallbackValidation.error || 'Fallback follow-up draft invalid' });
+    }
     return res.json(fallbackFollowUp);
   } catch (error: any) {
     console.error('Error generating follow-up draft:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate follow-up draft' });
+    sendInternalError(res, error, 'Failed to generate follow-up draft');
   }
 });
 

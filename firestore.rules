@@ -6,12 +6,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Authenticated users can strictly read and write their own documents and subcollections
+    // Persistent authenticated users can strictly read and write their own documents and subcollections.
+    // Anonymous Firebase sessions are preview-only and must not access private workspace data.
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.auth.uid == userId;
 
       match /{allSubcollections=**} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if request.auth != null
+          && request.auth.token.firebase.sign_in_provider != 'anonymous'
+          && request.auth.uid == userId;
       }
     }
   }

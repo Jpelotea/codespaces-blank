@@ -57,7 +57,7 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
   const [newSkillName, setNewSkillName] = useState('');
   const [newSkillCategory, setNewSkillCategory] = useState(profileState.skillCategories[0]?.id || 'cat-1');
 
-  // Trigger Save to Parent and LocalStorage
+  // Trigger save to the authenticated workspace
   const handleSaveAll = () => {
     onUpdateProfile(profileState);
     setIsSavedNotice(true);

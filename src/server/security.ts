@@ -49,11 +49,12 @@ export async function verifyFirebaseIdToken(token: string): Promise<Authenticate
     }
 
     const firebaseClaim = payload.firebase as Record<string, unknown> | undefined;
+    const isAnonymous = firebaseClaim?.sign_in_provider === 'anonymous';
 
     return {
       uid: payload.sub,
       email: typeof payload.email === 'string' ? payload.email : undefined,
-      isAnonymous: firebaseClaim?.sign_in_provider === 'anonymous',
+      isAnonymous,
     };
   } catch (err: any) {
     throw new Error(`Invalid or expired Firebase ID token: ${err.message}`);
@@ -83,6 +84,12 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
 
   try {
     const user = await verifyFirebaseIdToken(token);
+    if (user.isAnonymous) {
+      return res.status(403).json({
+        error: 'Guest sessions cannot access authenticated AI services. Sign in with a personal account first.',
+        code: 'AUTH_ACCOUNT_REQUIRED'
+      });
+    }
     req.user = user;
     next();
   } catch (err: any) {
