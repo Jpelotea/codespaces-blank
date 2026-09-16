@@ -246,6 +246,24 @@ export default function App() {
     }
   };
 
+  // Handler: Full application record update (for interview dates, deadlines, and schedules)
+  const handleUpdateApplication = async (updatedApp: ApplicationRecord) => {
+    const updated = applications.map(a => a.id === updatedApp.id ? updatedApp : a);
+    setApplications(updated);
+    localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(updated));
+
+    if (currentUser) {
+      setIsSyncing(true);
+      try {
+        await saveApplicationToFirestore(currentUser.uid, updatedApp);
+      } catch (e) {
+        console.error('Failed to update application in Firestore:', e);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+  };
+
   // Handler: Update profile in state and Firestore
   const handleUpdateProfile = async (updated: UserProfile) => {
     setUserProfile(updated);
@@ -352,6 +370,11 @@ export default function App() {
             activeJob={activeJob}
             activeAnalysis={activeAnalysis}
             userProfile={userProfile}
+            onUpdateApplication={handleUpdateApplication}
+            onSelectJob={(job, analysis) => {
+              setActiveJob(job);
+              if (analysis) setActiveAnalysis(analysis);
+            }}
           />
         )}
 

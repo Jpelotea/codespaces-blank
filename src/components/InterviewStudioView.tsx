@@ -13,7 +13,8 @@ import {
   Clock, 
   Mail, 
   ChevronRight,
-  BookOpen
+  BookOpen,
+  CalendarDays
 } from 'lucide-react';
 import { 
   ApplicationRecord, 
@@ -24,19 +25,24 @@ import {
   JobFitAnalysis
 } from '../types';
 import { generateInterviewPrep, generateFollowUpDraft } from '../services/api';
+import { InterviewCalendarWidget } from './InterviewCalendarWidget';
 
 interface InterviewStudioViewProps {
   applications: ApplicationRecord[];
   activeJob: JobPosting | null;
   activeAnalysis: JobFitAnalysis | null;
   userProfile: UserProfile;
+  onUpdateApplication?: (app: ApplicationRecord) => void;
+  onSelectJob?: (job: JobPosting, analysis?: JobFitAnalysis) => void;
 }
 
 export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
   applications,
   activeJob,
   activeAnalysis,
-  userProfile
+  userProfile,
+  onUpdateApplication,
+  onSelectJob
 }) => {
   // Selected Application / Role
   const [selectedAppId, setSelectedAppId] = useState<string>(
@@ -58,6 +64,19 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
   // Current Target Job
   const currentApp = applications.find(a => a.id === selectedAppId);
   const currentJob = currentApp ? currentApp.job : activeJob;
+
+  const handleSelectAppFromCalendar = (appId: string) => {
+    setSelectedAppId(appId);
+    const target = applications.find(a => a.id === appId);
+    if (target && onSelectJob) {
+      onSelectJob(target.job, target.fitAnalysis);
+    }
+    // Smooth scroll down to the STAR prep section
+    const prepSection = document.getElementById('interview-prep-workspace');
+    if (prepSection) {
+      prepSection.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
 
   const handleCopy = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -108,8 +127,16 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Visual Calendar Widget: Tracks upcoming interview dates, rounds, and application deadlines */}
+      <InterviewCalendarWidget
+        applications={applications}
+        selectedAppId={selectedAppId}
+        onSelectApplication={handleSelectAppFromCalendar}
+        onUpdateApplication={onUpdateApplication}
+      />
+
       {/* Top Banner & Selector */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div id="interview-prep-workspace" className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1 max-w-2xl">
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">
@@ -127,7 +154,7 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
         {/* Application Selector */}
         <div className="flex items-center gap-2 self-end md:self-auto w-full md:w-auto">
           <label className="text-xs font-semibold text-slate-700 whitespace-nowrap">
-            Target Role:
+            Active Role:
           </label>
           <select
             value={selectedAppId}

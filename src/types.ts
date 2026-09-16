@@ -182,6 +182,10 @@ export interface ApplicationRecord {
   fitScore: number;
   dateAdded: string;
   dateApplied?: string;
+  applicationDeadline?: string;
+  interviewDate?: string;
+  interviewTime?: string;
+  interviewType?: 'Screening' | 'Technical / Task' | 'Hiring Manager' | 'Final Round' | 'Panel';
   nextFollowUpDate?: string;
   nextActionNote?: string;
   fitAnalysis?: JobFitAnalysis;
