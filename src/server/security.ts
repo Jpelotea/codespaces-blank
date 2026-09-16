@@ -123,11 +123,15 @@ export function sanitizeText(input: unknown, maxLength: number = 12000): string 
   if (typeof input !== 'string') {
     return '';
   }
+
+  const boundaryTagPattern = /<\/?\s*untrusted_external_job_description\b[^>]*>/gi;
+
   // Remove control characters (except common whitespace/newlines)
   const cleaned = input
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-    // Neutralize prompt boundary escape attempts across opening and closing variants.
-    .replace(/<\/?untrusted_external_job_description>/gi, '[stripped-tag]')
+    // Neutralize prompt boundary escape attempts across opening and closing variants,
+    // including attributes and whitespace: <tag ...> or </ tag   >.
+    .replace(boundaryTagPattern, '[stripped-tag]')
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .trim();
 
