@@ -65,6 +65,15 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
   const currentApp = applications.find(a => a.id === selectedAppId);
   const currentJob = currentApp ? currentApp.job : activeJob;
 
+  // Hydrate prepPlan from persisted application data
+  React.useEffect(() => {
+    if (currentApp?.interviewPrep) {
+      setPrepPlan(currentApp.interviewPrep);
+    } else if (!currentApp) {
+      setPrepPlan(null);
+    }
+  }, [selectedAppId, currentApp]);
+
   const handleSelectAppFromCalendar = (appId: string) => {
     setSelectedAppId(appId);
     const target = applications.find(a => a.id === appId);
@@ -84,7 +93,7 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
     setTimeout(() => setCopiedKey(null), 2500);
   };
 
-  // Generate Interview Prep
+  // Generate Interview Prep and persist to Firestore via onUpdateApplication
   const handleGeneratePrep = async () => {
     if (!currentJob) return;
     setIsGeneratingPrep(true);
@@ -97,6 +106,13 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
         currentApp?.fitAnalysis || activeAnalysis || undefined
       );
       setPrepPlan(plan);
+      if (currentApp && onUpdateApplication) {
+        onUpdateApplication({
+          ...currentApp,
+          interviewPrep: plan,
+          updatedAt: new Date().toISOString()
+        });
+      }
     } catch (err) {
       console.error('Failed to generate interview prep:', err);
     } finally {

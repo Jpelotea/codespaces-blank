@@ -29,8 +29,8 @@ import {
 } from './lib/firebase';
 import { ShieldCheck, Cloud, UserCheck, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
 
-const LOCAL_PROFILE_KEY = 'ai_job_copilot_profile_local';
-const LOCAL_APPS_KEY = 'ai_job_copilot_apps_local';
+const getProfileStorageKey = (uid?: string | null) => uid ? `ai_job_copilot_profile_${uid}` : 'ai_job_copilot_profile_guest';
+const getAppsStorageKey = (uid?: string | null) => uid ? `ai_job_copilot_apps_${uid}` : 'ai_job_copilot_apps_guest';
 
 export default function App() {
   // Navigation State
@@ -49,7 +49,7 @@ export default function App() {
   // User Profile state
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_PROFILE_KEY);
+      const saved = localStorage.getItem(getProfileStorageKey(null));
       if (saved) return JSON.parse(saved);
     } catch (e) {
       console.error('Failed to load local profile', e);
@@ -60,7 +60,7 @@ export default function App() {
   // Applications pipeline state
   const [applications, setApplications] = useState<ApplicationRecord[]>(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_APPS_KEY);
+      const saved = localStorage.getItem(getAppsStorageKey(null));
       if (saved) return JSON.parse(saved);
     } catch (e) {
       console.error('Failed to load local applications', e);
@@ -92,23 +92,17 @@ export default function App() {
           const { profile, applications: userApps } = await initializeUserWorkspace(user, true);
           setUserProfile(profile);
           setApplications(userApps.length > 0 ? userApps : INITIAL_SAMPLE_APPLICATIONS);
-          localStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(profile));
-          localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(userApps));
+          localStorage.setItem(getProfileStorageKey(user.uid), JSON.stringify(profile));
+          localStorage.setItem(getAppsStorageKey(user.uid), JSON.stringify(userApps));
         } catch (err) {
           console.error('Error syncing user workspace from Firestore:', err);
         } finally {
           setIsSyncing(false);
         }
       } else {
-        // User logged out: reload default local state
-        const savedProfile = localStorage.getItem(LOCAL_PROFILE_KEY);
-        if (savedProfile) {
-          try {
-            setUserProfile(JSON.parse(savedProfile));
-          } catch (e) {
-            setUserProfile(INITIAL_USER_PROFILE);
-          }
-        }
+        // User logged out: restore guest sandbox defaults, isolating prior user data
+        setUserProfile(INITIAL_USER_PROFILE);
+        setApplications(INITIAL_SAMPLE_APPLICATIONS);
       }
     });
 
@@ -121,37 +115,42 @@ export default function App() {
     analysis?: JobFitAnalysis, 
     materials?: TailoredMaterials
   ) => {
-    const existingIndex = applications.findIndex(a => a.job.title === job.title && a.job.company === job.company);
     let recordToSave: ApplicationRecord;
 
-    if (existingIndex >= 0) {
-      const updated = [...applications];
-      recordToSave = {
-        ...updated[existingIndex],
-        fitScore: analysis?.overallScore || updated[existingIndex].fitScore,
-        fitAnalysis: analysis || updated[existingIndex].fitAnalysis,
-        materials: materials || updated[existingIndex].materials
-      };
-      updated[existingIndex] = recordToSave;
-      setApplications(updated);
-      localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(updated));
-    } else {
-      recordToSave = {
-        id: `app-${Date.now()}`,
-        job,
-        status: 'Ready to Apply',
-        fitScore: analysis?.overallScore || 90,
-        dateAdded: new Date().toISOString().split('T')[0],
-        nextFollowUpDate: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0],
-        nextActionNote: 'Review tailored materials and submit application.',
-        fitAnalysis: analysis,
-        materials,
-        notes: `Analyzed with ${analysis?.overallScore || 90}% match score.`
-      };
-      const updated = [recordToSave, ...applications];
-      setApplications(updated);
-      localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(updated));
-    }
+    setApplications(prev => {
+      const existingIndex = prev.findIndex(a => a.job.title === job.title && a.job.company === job.company);
+      let updated: ApplicationRecord[];
+
+      if (existingIndex >= 0) {
+        recordToSave = {
+          ...prev[existingIndex],
+          fitScore: analysis?.overallScore || prev[existingIndex].fitScore,
+          fitAnalysis: analysis || prev[existingIndex].fitAnalysis,
+          materials: materials || prev[existingIndex].materials,
+          updatedAt: new Date().toISOString()
+        };
+        updated = [...prev];
+        updated[existingIndex] = recordToSave;
+      } else {
+        recordToSave = {
+          id: `app-${Date.now()}`,
+          job,
+          status: 'Ready to Apply',
+          fitScore: analysis?.overallScore || 90,
+          dateAdded: new Date().toISOString().split('T')[0],
+          nextFollowUpDate: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0],
+          nextActionNote: 'Review tailored materials and submit application.',
+          fitAnalysis: analysis,
+          materials,
+          notes: `Analyzed with ${analysis?.overallScore || 90}% match score.`,
+          updatedAt: new Date().toISOString()
+        };
+        updated = [recordToSave, ...prev];
+      }
+
+      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
+      return updated;
+    });
 
     setActiveJob(job);
     if (analysis) setActiveAnalysis(analysis);
@@ -160,7 +159,7 @@ export default function App() {
     if (currentUser) {
       setIsSyncing(true);
       try {
-        await saveApplicationToFirestore(currentUser.uid, recordToSave);
+        await saveApplicationToFirestore(currentUser.uid, recordToSave!);
       } catch (e) {
         console.error('Failed to sync application to Firestore:', e);
       } finally {
@@ -169,32 +168,44 @@ export default function App() {
     }
   };
 
-  // Handler: Update application status
+  // Handler: Update application status with dateApplied automation
   const handleUpdateApplicationStatus = async (id: string, newStatus: ApplicationStatus) => {
-    const updated = applications.map(a => a.id === id ? { ...a, status: newStatus } : a);
-    setApplications(updated);
-    localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(updated));
+    let updatedRecord: ApplicationRecord | null = null;
 
-    if (currentUser) {
-      const target = updated.find(a => a.id === id);
-      if (target) {
-        setIsSyncing(true);
-        try {
-          await saveApplicationToFirestore(currentUser.uid, target);
-        } catch (e) {
-          console.error('Failed to update status in Firestore:', e);
-        } finally {
-          setIsSyncing(false);
-        }
+    setApplications(prev => {
+      const updated = prev.map(a => {
+        if (a.id !== id) return a;
+        updatedRecord = {
+          ...a,
+          status: newStatus,
+          dateApplied: newStatus === 'Applied' && !a.dateApplied ? new Date().toISOString().split('T')[0] : a.dateApplied,
+          updatedAt: new Date().toISOString()
+        };
+        return updatedRecord;
+      });
+      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
+      return updated;
+    });
+
+    if (currentUser && updatedRecord) {
+      setIsSyncing(true);
+      try {
+        await saveApplicationToFirestore(currentUser.uid, updatedRecord);
+      } catch (e) {
+        console.error('Failed to update status in Firestore:', e);
+      } finally {
+        setIsSyncing(false);
       }
     }
   };
 
   // Handler: Delete application
   const handleDeleteApplication = async (id: string) => {
-    const updated = applications.filter(a => a.id !== id);
-    setApplications(updated);
-    localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(updated));
+    setApplications(prev => {
+      const updated = prev.filter(a => a.id !== id);
+      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
+      return updated;
+    });
 
     if (currentUser) {
       setIsSyncing(true);
@@ -218,21 +229,24 @@ export default function App() {
   // Handler: Update notes and next action
   const handleUpdateNotes = async (id: string, notes: string, nextActionDate?: string, nextActionNote?: string) => {
     let modifiedRecord: ApplicationRecord | null = null;
-    const updated = applications.map(a => {
-      if (a.id === id) {
-        modifiedRecord = {
-          ...a,
-          notes,
-          nextFollowUpDate: nextActionDate || a.nextFollowUpDate,
-          nextActionNote: nextActionNote || a.nextActionNote
-        };
-        return modifiedRecord;
-      }
-      return a;
-    });
 
-    setApplications(updated);
-    localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(updated));
+    setApplications(prev => {
+      const updated = prev.map(a => {
+        if (a.id === id) {
+          modifiedRecord = {
+            ...a,
+            notes,
+            nextFollowUpDate: nextActionDate || a.nextFollowUpDate,
+            nextActionNote: nextActionNote || a.nextActionNote,
+            updatedAt: new Date().toISOString()
+          };
+          return modifiedRecord;
+        }
+        return a;
+      });
+      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
+      return updated;
+    });
 
     if (currentUser && modifiedRecord) {
       setIsSyncing(true);
@@ -248,14 +262,16 @@ export default function App() {
 
   // Handler: Full application record update (for interview dates, deadlines, and schedules)
   const handleUpdateApplication = async (updatedApp: ApplicationRecord) => {
-    const updated = applications.map(a => a.id === updatedApp.id ? updatedApp : a);
-    setApplications(updated);
-    localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(updated));
+    setApplications(prev => {
+      const updated = prev.map(a => a.id === updatedApp.id ? { ...updatedApp, updatedAt: new Date().toISOString() } : a);
+      localStorage.setItem(getAppsStorageKey(currentUser?.uid), JSON.stringify(updated));
+      return updated;
+    });
 
     if (currentUser) {
       setIsSyncing(true);
       try {
-        await saveApplicationToFirestore(currentUser.uid, updatedApp);
+        await saveApplicationToFirestore(currentUser.uid, { ...updatedApp, updatedAt: new Date().toISOString() });
       } catch (e) {
         console.error('Failed to update application in Firestore:', e);
       } finally {
@@ -267,7 +283,7 @@ export default function App() {
   // Handler: Update profile in state and Firestore
   const handleUpdateProfile = async (updated: UserProfile) => {
     setUserProfile(updated);
-    localStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(updated));
+    localStorage.setItem(getProfileStorageKey(currentUser?.uid), JSON.stringify(updated));
 
     if (currentUser) {
       setIsSyncing(true);

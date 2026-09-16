@@ -39,6 +39,8 @@ const STAGES: { key: ApplicationStatus; label: string; color: string }[] = [
   { key: 'Screening', label: 'Screening', color: 'border-amber-300 bg-amber-50 text-amber-800' },
   { key: 'Interviewing', label: 'Interviewing', color: 'border-purple-300 bg-purple-50 text-purple-800' },
   { key: 'Offer', label: 'Offer Received', color: 'border-emerald-300 bg-emerald-50 text-emerald-800' },
+  { key: 'Rejected', label: 'Rejected', color: 'border-rose-300 bg-rose-50 text-rose-800' },
+  { key: 'Withdrawn', label: 'Withdrawn', color: 'border-zinc-300 bg-zinc-50 text-zinc-700' },
   { key: 'Archived', label: 'Archived', color: 'border-slate-200 bg-slate-100 text-slate-600' }
 ];
 
@@ -54,11 +56,34 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
   const [selectedAppModal, setSelectedAppModal] = useState<ApplicationRecord | null>(null);
+  const [appToDelete, setAppToDelete] = useState<ApplicationRecord | null>(null);
 
   // Edit notes state inside modal
   const [modalNotes, setModalNotes] = useState('');
   const [modalNextAction, setModalNextAction] = useState('');
   const [modalActionDate, setModalActionDate] = useState('');
+
+  // Close modals on Escape key
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (appToDelete) setAppToDelete(null);
+        else if (selectedAppModal) setSelectedAppModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [appToDelete, selectedAppModal]);
+
+  const confirmDelete = () => {
+    if (appToDelete) {
+      onDeleteApplication(appToDelete.id);
+      if (selectedAppModal?.id === appToDelete.id) {
+        setSelectedAppModal(null);
+      }
+      setAppToDelete(null);
+    }
+  };
 
   const openAppDetails = (app: ApplicationRecord) => {
     setSelectedAppModal(app);
@@ -286,8 +311,8 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
                               <FileText className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => onDeleteApplication(app.id)}
-                              title="Remove"
+                              onClick={() => setAppToDelete(app)}
+                              title="Remove application"
                               className="p-1 rounded text-slate-400 hover:text-red-600 transition"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -379,7 +404,8 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
                         <FileText className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => onDeleteApplication(app.id)}
+                        onClick={() => setAppToDelete(app)}
+                        title="Remove application"
                         className="p-1 rounded text-slate-400 hover:text-red-600"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -389,6 +415,53 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {appToDelete && (
+        <div 
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-dialog-title"
+        >
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-slate-200 shadow-xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 id="delete-dialog-title" className="font-bold text-slate-900 text-base">
+                  Delete Application Record?
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  This action cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
+              Permanently remove <strong className="text-slate-900">{appToDelete.job.title}</strong> at <strong className="text-slate-900">{appToDelete.job.company}</strong> from your pipeline tracker and synchronized cloud records?
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setAppToDelete(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-xl transition min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition min-h-[44px]"
+              >
+                Confirm Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

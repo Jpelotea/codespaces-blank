@@ -3,13 +3,23 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { 
+  requireAuth, 
+  aiRateLimiter, 
+  sanitizeText, 
+  formatUntrustedJobContext 
+} from './src/server/security';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '10mb' }));
+// Enforce safe payload limit (prevent buffer memory exhaustion)
+app.use(express.json({ limit: '500kb' }));
+
+// Apply IP/UID rate limiting to all API endpoints
+app.use('/api', aiRateLimiter);
 
 // Lazy initialization of Gemini client
 let geminiClient: GoogleGenAI | null = null;
@@ -84,23 +94,30 @@ async function generateWithFallback(
 }
 
 // 1. Analyze Job Fit
-app.post('/api/analyze-job', async (req, res) => {
+app.post('/api/analyze-job', requireAuth, async (req, res) => {
   try {
-    const { jobTitle = 'Target Role', company = 'Company', jobDescription, userProfile = {} } = req.body;
-    if (!jobDescription) {
-      return res.status(400).json({ error: 'Job description is required' });
+    const rawDesc = req.body.jobDescription;
+    if (!rawDesc || typeof rawDesc !== 'string' || !rawDesc.trim()) {
+      return res.status(400).json({ error: 'Job description is required and must be a non-empty string' });
     }
+
+    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Target Role';
+    const company = sanitizeText(req.body.company, 200) || 'Company';
+    const jobDescription = sanitizeText(rawDesc, 12000);
+    const userProfile = req.body.userProfile || {};
 
     const ai = getGeminiClient();
     if (ai) {
+      const untrustedJobBlock = formatUntrustedJobContext(jobTitle, company, jobDescription);
       const prompt = `You are an expert AI Career Strategist and Hiring Consultant specializing in high-level Remote Virtual Assistants, Executive Assistants, Business Operations Leads, and AI-assisted Workflow Specialists.
 
 You are evaluating a candidate's fit for a specific job.
 
-CRITICAL INTEGRITY INSTRUCTION:
+CRITICAL INTEGRITY & PROVENANCE INSTRUCTION:
 You MUST NOT invent, exaggerate, or hallucinate any qualification, company name, metric, or past experience not present in the candidate's verified profile.
 All matched strengths must cite REAL items from the verified profile.
-If a requirement is not met by the profile, you MUST classify it as a Gap with an honest, realistic bridge strategy (e.g., highlighting adjacent transferable skills or learning plan) rather than claiming they have it.
+Every strength MUST include a status classification: "MATCH" (fully verified evidence exists), "PARTIAL_MATCH" (adjacent or partial evidence), or "UNKNOWN" (insufficient data).
+If a requirement is not met by the profile, you MUST classify it as a Gap with an honest, realistic bridge strategy rather than claiming they have it.
 
 --- CANDIDATE VERIFIED PROFILE ---
 Name: ${userProfile.name || 'Candidate'}
@@ -117,11 +134,8 @@ ${JSON.stringify(userProfile.skillCategories || [], null, 2)}
 Verified Portfolio Projects:
 ${JSON.stringify(userProfile.portfolioProjects || [], null, 2)}
 
---- TARGET JOB ---
-Title: ${jobTitle}
-Company: ${company}
-Description:
-${jobDescription}
+--- TARGET JOB DETAILS ---
+${untrustedJobBlock}
 
 Respond strictly with a JSON object matching this TypeScript structure:
 {
@@ -137,7 +151,8 @@ Respond strictly with a JSON object matching this TypeScript structure:
     {
       "requirement": string (extracted requirement from the job posting),
       "matchingExperience": string (concrete factual evidence from verified profile),
-      "sourceContext": string (e.g. "From Vanguard Tech Partners role" or "Project: Executive Daily AI Briefing")
+      "sourceContext": string (e.g. "From Vanguard Tech Partners role" or "Project: Executive Daily AI Briefing"),
+      "status": "MATCH" | "PARTIAL_MATCH" | "UNKNOWN"
     }
   ],
   "gaps": [
@@ -231,12 +246,17 @@ Respond strictly with a JSON object matching this TypeScript structure:
 });
 
 // 2. Generate Tailored Application Materials
-app.post('/api/generate-materials', async (req, res) => {
+app.post('/api/generate-materials', requireAuth, async (req, res) => {
   try {
-    const { jobTitle = 'Role', company = 'Company', jobDescription = '', userProfile = {}, pitchType = 'executive_formal' } = req.body;
+    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Role';
+    const company = sanitizeText(req.body.company, 200) || 'Company';
+    const jobDescription = sanitizeText(req.body.jobDescription, 12000);
+    const userProfile = req.body.userProfile || {};
+    const pitchType = sanitizeText(req.body.pitchType, 50) || 'executive_formal';
 
     const ai = getGeminiClient();
     if (ai) {
+      const untrustedJobBlock = formatUntrustedJobContext(jobTitle, company, jobDescription);
       const prompt = `You are an elite Career Copilot for top-tier Remote Executive Assistants, Business Operations Managers, and AI Workflow Specialists.
 Generate completely tailored application materials for this candidate applying to this specific role.
 
@@ -261,11 +281,8 @@ ${JSON.stringify(userProfile.skillCategories || [], null, 2)}
 Verified Portfolio Projects:
 ${JSON.stringify(userProfile.portfolioProjects || [], null, 2)}
 
---- TARGET JOB ---
-Title: ${jobTitle}
-Company: ${company}
-Description:
-${jobDescription}
+--- TARGET JOB DETAILS ---
+${untrustedJobBlock}
 
 PITCH TYPE REQUESTED: ${pitchType}
 (Options: "executive_formal" for high-end C-suite/founder roles, "conversational_modern" for tech startups, "upwork_proposal" for freelance/contract platforms, "direct_inbound" for LinkedIn/cold email outreach).
@@ -311,6 +328,8 @@ Respond strictly with a JSON object matching this structure:
       try {
         const text = await generateWithFallback(ai, prompt, 0.3);
         const parsed = JSON.parse(cleanJsonText(text));
+        parsed.disclaimer = 'Generated strictly from your verified profile vault. Always review, proofread, and verify details before submitting.';
+        parsed.generatedAt = new Date().toISOString();
         return res.json(parsed);
       } catch (aiError: any) {
         console.warn('[Gemini 503/High Demand Fallback] Running grounded materials generator:', aiError?.message || aiError);
@@ -322,6 +341,8 @@ Respond strictly with a JSON object matching this structure:
     const exp2 = userProfile.workExperiences?.[1];
 
     const fallbackMaterials = {
+      disclaimer: 'Generated strictly from your verified profile vault. Always review, proofread, and verify details before submitting.',
+      generatedAt: new Date().toISOString(),
       resume: {
         targetedSummary: `Detail-oriented ${jobTitle} with ${userProfile.yearsExperience || 6}+ years of verified remote leadership support. Proven specialist in multi-calendar deconfliction, confidential inbox triage, and building automated operational workflows with AI and Notion. Track record of saving leadership 9+ hours weekly through intelligent systems.`,
         highlightedCoreSkills: [
@@ -387,12 +408,16 @@ Respond strictly with a JSON object matching this structure:
 });
 
 // 3. Generate Interview Preparation Guidance
-app.post('/api/interview-prep', async (req, res) => {
+app.post('/api/interview-prep', requireAuth, async (req, res) => {
   try {
-    const { jobTitle = 'Role', company = 'Company', jobDescription = '', userProfile = {}, fitAnalysis = {} } = req.body;
+    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Role';
+    const company = sanitizeText(req.body.company, 200) || 'Company';
+    const jobDescription = sanitizeText(req.body.jobDescription, 12000);
+    const userProfile = req.body.userProfile || {};
 
     const ai = getGeminiClient();
     if (ai) {
+      const untrustedJobBlock = formatUntrustedJobContext(jobTitle, company, jobDescription);
       const prompt = `You are an executive hiring coach preparing a candidate for an intensive interview for:
 Role: ${jobTitle}
 Company: ${company}
@@ -405,8 +430,8 @@ ${JSON.stringify({
   answerBank: userProfile.answerBank
 }, null, 2)}
 
-Job Details:
-${jobDescription}
+Target Job Details:
+${untrustedJobBlock}
 
 Generate realistic, high-caliber interview prep guidance. Each STAR answer MUST draw directly on the candidate's actual verified experiences.
 Respond strictly in JSON:
@@ -519,9 +544,14 @@ Respond strictly in JSON:
 });
 
 // 4. Generate Follow-up Draft
-app.post('/api/followup-draft', async (req, res) => {
+app.post('/api/followup-draft', requireAuth, async (req, res) => {
   try {
-    const { stage = 'Post-Application (5-Day)', jobTitle = 'Role', company = 'Company', recipientName, userProfile = {}, customNotes } = req.body;
+    const stage = sanitizeText(req.body.stage, 100) || 'Post-Application (5-Day)';
+    const jobTitle = sanitizeText(req.body.jobTitle, 200) || 'Role';
+    const company = sanitizeText(req.body.company, 200) || 'Company';
+    const recipientName = sanitizeText(req.body.recipientName, 100);
+    const customNotes = sanitizeText(req.body.customNotes, 2000);
+    const userProfile = req.body.userProfile || {};
 
     const ai = getGeminiClient();
     if (ai) {

@@ -75,6 +75,7 @@ export interface StrengthMatch {
   requirement: string;
   matchingExperience: string;
   sourceContext: string;
+  status?: 'MATCH' | 'PARTIAL_MATCH' | 'GAP' | 'UNKNOWN';
 }
 
 export interface GapAnalysisItem {
@@ -129,6 +130,8 @@ export interface TailoredMaterials {
   resume: TailoredResumeContent;
   coverLetter: CoverLetterPitch;
   screeningAnswers: ApplicationScreeningAnswer[];
+  disclaimer?: string;
+  generatedAt?: string;
 }
 
 export interface StarAnswer {
@@ -173,7 +176,9 @@ export type ApplicationStatus =
   | 'Screening'
   | 'Interviewing'
   | 'Offer'
-  | 'Archived';
+  | 'Archived'
+  | 'Rejected'
+  | 'Withdrawn';
 
 export interface ApplicationRecord {
   id: string;
@@ -195,4 +200,6 @@ export interface ApplicationRecord {
   notes: string;
   contactName?: string;
   contactEmail?: string;
+  updatedAt?: string;
+  rejectionReason?: string;
 }

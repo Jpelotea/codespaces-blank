@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
@@ -74,6 +74,61 @@ export const InterviewCalendarWidget: React.FC<InterviewCalendarWidgetProps> = (
   const [modalTime, setModalTime] = useState<string>('2:00 PM PST');
   const [modalInterviewType, setModalInterviewType] = useState<'Screening' | 'Technical / Task' | 'Hiring Manager' | 'Final Round' | 'Panel'>('Hiring Manager');
   const [modalNotes, setModalNotes] = useState<string>('');
+
+  // Hover Tooltip State
+  const [hoveredTooltip, setHoveredTooltip] = useState<{
+    event: CalendarEventItem;
+    top: number;
+    left: number;
+    placement: 'top' | 'bottom';
+    badgeCenterX: number;
+  } | null>(null);
+
+  // Dismiss tooltip on scroll or resize
+  useEffect(() => {
+    const handleDismiss = () => setHoveredTooltip(null);
+    window.addEventListener('scroll', handleDismiss, { passive: true });
+    window.addEventListener('resize', handleDismiss, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleDismiss);
+      window.removeEventListener('resize', handleDismiss);
+    };
+  }, []);
+
+  const handleMouseEnterBadge = (ev: CalendarEventItem, e: React.MouseEvent<HTMLElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const tooltipWidth = 280;
+    const tooltipHeight = 170; // estimated card height
+    const padding = 12;
+
+    const centerX = rect.left + rect.width / 2;
+    let left = centerX - tooltipWidth / 2;
+    if (left < padding) left = padding;
+    if (left + tooltipWidth > window.innerWidth - padding) {
+      left = window.innerWidth - tooltipWidth - padding;
+    }
+
+    let top = rect.top - 10;
+    let placement: 'top' | 'bottom' = 'top';
+
+    // If too close to viewport top, show below the badge
+    if (rect.top < tooltipHeight + 24) {
+      top = rect.bottom + 10;
+      placement = 'bottom';
+    }
+
+    setHoveredTooltip({
+      event: ev,
+      top,
+      left,
+      placement,
+      badgeCenterX: centerX
+    });
+  };
+
+  const handleMouseLeaveBadge = () => {
+    setHoveredTooltip(null);
+  };
 
   // Extract all calendar events from application state
   const allEvents = useMemo<CalendarEventItem[]>(() => {
@@ -518,20 +573,27 @@ export const InterviewCalendarWidget: React.FC<InterviewCalendarWidgetProps> = (
                     </div>
 
                     {/* Event badges */}
-                    <div className="space-y-1 overflow-hidden">
+                    <div className="space-y-1">
                       {cell.events.slice(0, 2).map((ev) => {
                         const isInterview = ev.type === 'interview';
                         const isDeadline = ev.type === 'deadline';
                         return (
                           <div
                             key={ev.id}
-                            title={`${ev.title} (${ev.time || ''})`}
-                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded truncate border leading-tight ${
+                            id={`calendar-event-badge-${ev.id}`}
+                            onMouseEnter={(e) => handleMouseEnterBadge(ev, e)}
+                            onMouseLeave={handleMouseLeaveBadge}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDayStr(cell.dateStr);
+                              onSelectApplication(ev.applicationId);
+                            }}
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded truncate border leading-tight transition hover:scale-[1.02] hover:shadow-xs cursor-pointer ${
                               isInterview
-                                ? 'bg-purple-100/90 text-purple-900 border-purple-200'
+                                ? 'bg-purple-100/90 text-purple-900 border-purple-200 hover:bg-purple-200'
                                 : isDeadline
-                                ? 'bg-amber-100/90 text-amber-900 border-amber-200'
-                                : 'bg-blue-100/90 text-blue-900 border-blue-200'
+                                ? 'bg-amber-100/90 text-amber-900 border-amber-200 hover:bg-amber-200'
+                                : 'bg-blue-100/90 text-blue-900 border-blue-200 hover:bg-blue-200'
                             }`}
                           >
                             <span className="font-bold">{isInterview ? '🎙️ ' : isDeadline ? '⏳ ' : '📬 '}</span>
@@ -540,7 +602,13 @@ export const InterviewCalendarWidget: React.FC<InterviewCalendarWidgetProps> = (
                         );
                       })}
                       {cell.events.length > 2 && (
-                        <div className="text-[9px] text-slate-500 font-semibold px-1">
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedDayStr(cell.dateStr);
+                          }}
+                          className="text-[9px] text-purple-700 hover:text-purple-900 font-semibold px-1 cursor-pointer hover:underline"
+                        >
                           +{cell.events.length - 2} more
                         </div>
                       )}
@@ -608,7 +676,11 @@ export const InterviewCalendarWidget: React.FC<InterviewCalendarWidgetProps> = (
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="space-y-0.5">
-                            <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            <span 
+                              id={`day-event-badge-${ev.id}`}
+                              onMouseEnter={(e) => handleMouseEnterBadge(ev, e)}
+                              onMouseLeave={handleMouseLeaveBadge}
+                              className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border cursor-help transition hover:opacity-90 ${
                               ev.type === 'interview'
                                 ? 'bg-purple-100 text-purple-800 border-purple-200'
                                 : ev.type === 'deadline'
@@ -722,14 +794,18 @@ export const InterviewCalendarWidget: React.FC<InterviewCalendarWidgetProps> = (
 
                       <div className="space-y-0.5">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          <span 
+                            id={`agenda-event-badge-${ev.id}`}
+                            onMouseEnter={(e) => handleMouseEnterBadge(ev, e)}
+                            onMouseLeave={handleMouseLeaveBadge}
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border cursor-help transition hover:opacity-90 ${
                             ev.type === 'interview'
                               ? 'bg-purple-100 text-purple-800 border-purple-200'
                               : ev.type === 'deadline'
                               ? 'bg-amber-100 text-amber-800 border-amber-200'
                               : 'bg-blue-100 text-blue-800 border-blue-200'
                           }`}>
-                            {ev.type === 'interview' ? 'Interview' : ev.type === 'deadline' ? 'Deadline' : 'Follow-Up'}
+                            {ev.type === 'interview' ? '🎙️ Interview' : ev.type === 'deadline' ? '⏳ Deadline' : '📬 Follow-Up'}
                           </span>
                           <span className="font-bold text-slate-900 text-xs sm:text-sm">
                             {ev.roleTitle}
@@ -781,6 +857,114 @@ export const InterviewCalendarWidget: React.FC<InterviewCalendarWidgetProps> = (
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Hoverable Tooltip Card */}
+      {hoveredTooltip && (
+        <div
+          id="calendar-event-tooltip"
+          role="tooltip"
+          className="fixed z-50 pointer-events-none transition-opacity duration-150 ease-out"
+          style={{
+            top: `${hoveredTooltip.top}px`,
+            left: `${hoveredTooltip.left}px`,
+            transform: hoveredTooltip.placement === 'top' ? 'translateY(-100%)' : 'none',
+            width: '280px'
+          }}
+        >
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl p-3.5 text-slate-800 text-xs relative animate-in fade-in zoom-in-95 duration-150">
+            {/* Header: Event Type & Relative Countdown */}
+            <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-100">
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  hoveredTooltip.event.type === 'interview'
+                    ? 'bg-purple-100 text-purple-800 border-purple-200'
+                    : hoveredTooltip.event.type === 'deadline'
+                    ? 'bg-amber-100 text-amber-800 border-amber-200'
+                    : 'bg-blue-100 text-blue-800 border-blue-200'
+                }`}
+              >
+                <span>
+                  {hoveredTooltip.event.type === 'interview'
+                    ? '🎙️ Interview'
+                    : hoveredTooltip.event.type === 'deadline'
+                    ? '⏳ Deadline'
+                    : '📬 Follow-Up'}
+                </span>
+                {hoveredTooltip.event.subType && (
+                  <span className="font-semibold text-slate-600">
+                    • {hoveredTooltip.event.subType}
+                  </span>
+                )}
+              </span>
+
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                  getRelativeBadge(hoveredTooltip.event.dateStr).color
+                }`}
+              >
+                {getRelativeBadge(hoveredTooltip.event.dateStr).label}
+              </span>
+            </div>
+
+            {/* Role Title & Company */}
+            <div className="space-y-0.5">
+              <div className="font-bold text-slate-900 text-xs leading-snug line-clamp-2">
+                {hoveredTooltip.event.roleTitle}
+              </div>
+              <div className="flex items-center gap-1.5 text-slate-600 text-[11px] font-medium">
+                <Building className="w-3 h-3 text-slate-400 shrink-0" />
+                <span className="truncate">{hoveredTooltip.event.company}</span>
+              </div>
+            </div>
+
+            {/* Date & Time info */}
+            <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-600">
+              <div className="flex items-center gap-1 font-medium">
+                <CalendarIcon className="w-3 h-3 text-slate-400" />
+                <span>
+                  {new Date(hoveredTooltip.event.dateStr + 'T00:00:00').toLocaleDateString('default', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric'
+                  })}
+                </span>
+              </div>
+              {hoveredTooltip.event.time && (
+                <div className="flex items-center gap-1 font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                  <Clock className="w-3 h-3 text-purple-600" />
+                  <span>{hoveredTooltip.event.time}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Notes preview if present */}
+            {hoveredTooltip.event.notes && (
+              <p className="mt-2 text-[10px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 line-clamp-2 leading-relaxed">
+                {hoveredTooltip.event.notes}
+              </p>
+            )}
+
+            {/* Footer action hint */}
+            <div className="mt-2.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-purple-600 font-semibold">
+              <span>Click to view role & STAR prep</span>
+              <Sparkles className="w-3 h-3" />
+            </div>
+
+            {/* Pointer arrow aligned with badge center */}
+            <div
+              className={`absolute w-2.5 h-2.5 bg-white border-slate-200 rotate-45 ${
+                hoveredTooltip.placement === 'top'
+                  ? 'bottom-[-6px] border-b border-r shadow-xs'
+                  : 'top-[-6px] border-t border-l shadow-2xs'
+              }`}
+              style={{
+                left: `${Math.max(16, Math.min(264, hoveredTooltip.badgeCenterX - hoveredTooltip.left))}px`,
+                transform: 'translateX(-50%) rotate(45deg)'
+              }}
+            />
+          </div>
         </div>
       )}
 
