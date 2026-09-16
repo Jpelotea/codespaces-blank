@@ -9,12 +9,12 @@ import {
   sanitizeText, 
   formatUntrustedJobContext 
 } from './src/server/security';
+import { ProfileAccessError, getVerifiedUserProfile } from './src/server/profile';
 import {
   validateJobFitAnalysis,
   validateTailoredMaterials,
   validateInterviewPrep,
   validateFollowUpDraft,
-  validateUserProfile
 } from './src/server/validation';
 
 dotenv.config();
@@ -130,6 +130,12 @@ function sendInternalError(res: express.Response, error: unknown, publicMessage:
   if (error instanceof RequestValidationError) {
     return res.status(400).json({ error: error.message, code: 'INVALID_REQUEST' });
   }
+  if (error instanceof ProfileAccessError) {
+    return res.status(503).json({
+      error: 'Verified profile is temporarily unavailable. Please try again later.',
+      code: 'PROFILE_UNAVAILABLE'
+    });
+  }
 
   const details = error instanceof Error ? error.message : String(error);
   res.status(500).json({
@@ -201,15 +207,13 @@ app.post('/api/analyze-job', requireAuth, aiRateLimiter, async (req, res) => {
       for (const check of checks) {
         if (!check.ok) return check;
       }
-      const profileCheck = validateUserProfile(body.userProfile);
-      if (!profileCheck.ok) return profileCheck;
       return { ok: true };
     }, 'job analysis request');
 
     const jobTitle = sanitizeText(payload['jobTitle'], 200) || 'Target Role';
     const company = sanitizeText(payload['company'], 200) || 'Company';
     const jobDescription = sanitizeText(rawDesc, 12000);
-    const userProfile = ((payload['userProfile'] ?? {}) as Record<string, unknown>);
+    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
 
     const ai = getGeminiClient();
     if (ai) {
@@ -293,10 +297,10 @@ Respond strictly with a JSON object matching this TypeScript structure:
     }
 
     // High-fidelity profile-grounded fallback (zero hallucination)
-    const experiences = (userProfile['workExperiences'] as Array<Record<string, unknown>> | undefined) || [];
+    const experiences = userProfile.workExperiences;
     const firstExp = experiences[0];
     const secondExp = experiences[1];
-    const firstProject = ((userProfile['portfolioProjects'] as Array<Record<string, unknown>> | undefined) || [])[0];
+    const firstProject = userProfile.portfolioProjects[0];
 
     const fallbackStrengths = [
       {
@@ -335,7 +339,7 @@ Respond strictly with a JSON object matching this TypeScript structure:
       },
       strengths: fallbackStrengths,
       gaps: fallbackGaps,
-      recommendedProjects: ((userProfile['portfolioProjects'] as Array<Record<string, unknown>> | undefined) || []).slice(0, 2).map((p: Record<string, unknown>) => ({
+      recommendedProjects: userProfile.portfolioProjects.slice(0, 2).map((p) => ({
         projectId: String(p['id'] || 'project'),
         projectTitle: String(p['title'] || 'Project'),
         whyRelevant: `Demonstrates verified real-world automation, time savings (${p['verifiedImpactMetric'] || '9+ hrs/week'}), and operational rigor.`
@@ -376,15 +380,13 @@ app.post('/api/generate-materials', requireAuth, aiRateLimiter, async (req, res)
       for (const check of checks) {
         if (!check.ok) return check;
       }
-      const profileCheck = validateUserProfile(body.userProfile);
-      if (!profileCheck.ok) return profileCheck;
       return { ok: true };
     }, 'materials request');
 
     const jobTitle = sanitizeText(payload['jobTitle'], 200) || 'Role';
     const company = sanitizeText(payload['company'], 200) || 'Company';
     const jobDescription = sanitizeText(payload['jobDescription'], 12000);
-    const userProfile = ((payload['userProfile'] ?? {}) as Record<string, unknown>);
+    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
     const pitchType = sanitizeText(payload['pitchType'], 50) || 'executive_formal';
 
     const ai = getGeminiClient();
@@ -472,8 +474,8 @@ Respond strictly with a JSON object matching this structure:
     }
 
     // Grounded fallback using verified profile
-    const exp1 = ((userProfile['workExperiences'] as Array<Record<string, unknown>> | undefined) || [])[0];
-    const exp2 = ((userProfile['workExperiences'] as Array<Record<string, unknown>> | undefined) || [])[1];
+    const exp1 = userProfile.workExperiences[0];
+    const exp2 = userProfile.workExperiences[1];
 
     const fallbackMaterials = {
       disclaimer: 'Generated strictly from your verified profile vault. Always review, proofread, and verify details before submitting.',
@@ -560,8 +562,6 @@ app.post('/api/interview-prep', requireAuth, aiRateLimiter, async (req, res) => 
       for (const check of checks) {
         if (!check.ok) return check;
       }
-      const profileCheck = validateUserProfile(body.userProfile);
-      if (!profileCheck.ok) return profileCheck;
       if (body.fitAnalysis !== undefined) {
         const fitCheck = validateJobFitAnalysis(body.fitAnalysis);
         if (!fitCheck.ok) return fitCheck;
@@ -572,7 +572,7 @@ app.post('/api/interview-prep', requireAuth, aiRateLimiter, async (req, res) => 
     const jobTitle = sanitizeText(payload.jobTitle, 200) || 'Role';
     const company = sanitizeText(payload.company, 200) || 'Company';
     const jobDescription = sanitizeText(payload.jobDescription, 12000);
-    const userProfile = payload.userProfile as Record<string, unknown>;
+    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
 
     const ai = getGeminiClient();
     if (ai) {
@@ -728,7 +728,7 @@ app.post('/api/followup-draft', requireAuth, aiRateLimiter, async (req, res) => 
       if (body.customNotes !== undefined && typeof body.customNotes !== 'string') {
         return { ok: false, error: 'customNotes must be a string' };
       }
-      return validateUserProfile(body.userProfile);
+      return { ok: true };
     }, 'follow-up request');
 
     const stage = sanitizeText(payload.stage, 100) || 'Post-Application (5-Day)';
@@ -736,7 +736,7 @@ app.post('/api/followup-draft', requireAuth, aiRateLimiter, async (req, res) => 
     const company = sanitizeText(payload.company, 200) || 'Company';
     const recipientName = sanitizeText(payload.recipientName, 100);
     const customNotes = sanitizeText(payload.customNotes, 2000);
-    const userProfile = payload.userProfile as Record<string, unknown>;
+    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
 
     const ai = getGeminiClient();
     if (ai) {

@@ -80,8 +80,7 @@ export async function analyzeJobFit(
     body: JSON.stringify({
       jobDescription,
       jobTitle,
-      company,
-      userProfile
+      company
     }),
     signal
   });
@@ -111,7 +110,6 @@ export async function generateTailoredMaterials(
       jobDescription,
       jobTitle,
       company,
-      userProfile,
       pitchType
     }),
     signal
@@ -142,7 +140,6 @@ export async function generateInterviewPrep(
       jobDescription,
       jobTitle,
       company,
-      userProfile,
       fitAnalysis
     }),
     signal
@@ -175,7 +172,6 @@ export async function generateFollowUpDraft(
       jobTitle,
       company,
       recipientName,
-      userProfile,
       customNotes
     }),
     signal
