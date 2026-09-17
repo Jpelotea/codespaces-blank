@@ -1,3 +1,5 @@
+import { getEvidenceValidationError } from '../lib/profileEvidence';
+
 type ValidationResult = {
   ok: boolean;
   error?: string;
@@ -51,12 +53,24 @@ const ensureOneOf = (value: unknown, field: string, allowed: readonly string[]):
   return { ok: true };
 };
 
+const validateOptionalEvidence = (value: unknown, field: string): ValidationResult => {
+  if (value === undefined) return { ok: true };
+  const error = getEvidenceValidationError(value);
+  return error ? { ok: false, error: `${field}: ${error}` } : { ok: true };
+};
+
 const validateSkillItem = (value: unknown): ValidationResult => {
   if (!isRecord(value)) return { ok: false, error: 'skill item must be an object' };
   const checks = [
     ensureString(value.name, 'skill name', 1, 200),
-    ensureString(value.level, 'skill level', 1, 50),
-    ensureString(value.isVerified === true ? 'true' : 'false', 'skill verification flag', 4, 5)
+    ensureOneOf(value.level, 'skill level', ['Expert', 'Proficient', 'Familiar']),
+    value.isVerified === undefined || typeof value.isVerified === 'boolean'
+      ? { ok: true }
+      : { ok: false, error: 'legacy skill verification flag must be a boolean' },
+    value.yearsExperience === undefined
+      ? { ok: true }
+      : ensureNumber(value.yearsExperience, 'skill years of experience', 0, 80),
+    validateOptionalEvidence(value.evidence, 'skill evidence')
   ];
   for (const check of checks) {
     if (!check.ok) return check;
@@ -71,7 +85,10 @@ const validateWorkExperience = (value: unknown): ValidationResult => {
     ensureString(value.title, 'experience title', 1, 200),
     ensureString(value.company, 'experience company', 1, 200),
     ensureString(value.period, 'experience period', 1, 100),
-    ensureString(value.description, 'experience description', 1, 2000)
+    ensureString(value.description, 'experience description', 0, 2000),
+    validateStringArray(value.verifiedAchievements, 'experience achievements', 50, 1000),
+    validateStringArray(value.toolsUsed, 'experience tools', 50, 200),
+    validateOptionalEvidence(value.evidence, 'experience evidence')
   ];
   for (const check of checks) {
     if (!check.ok) return check;
@@ -84,8 +101,15 @@ const validatePortfolioProject = (value: unknown): ValidationResult => {
   const checks = [
     ensureString(value.id, 'project id', 1, 200),
     ensureString(value.title, 'project title', 1, 200),
-    ensureString(value.description, 'project description', 1, 2000),
-    ensureString(value.verifiedImpactMetric, 'project impact metric', 1, 500)
+    ensureString(value.description, 'project description', 0, 2000),
+    value.verifiedImpactMetric === undefined
+      ? { ok: true }
+      : ensureString(value.verifiedImpactMetric, 'project impact metric', 1, 500),
+    value.deliverableSnippetOrLink === undefined
+      ? { ok: true }
+      : ensureString(value.deliverableSnippetOrLink, 'project deliverable', 1, 2000),
+    validateStringArray(value.toolsUsed, 'project tools', 50, 200),
+    validateOptionalEvidence(value.evidence, 'project evidence')
   ];
   for (const check of checks) {
     if (!check.ok) return check;
@@ -100,7 +124,7 @@ export function validateUserProfile(value: unknown): ValidationResult {
 
   const required = [
     'name', 'headline', 'email', 'phone', 'location', 'timezone',
-    'targetRoles', 'yearsExperience', 'executiveSummary', 'verifiedOnlyMode',
+    'targetRoles', 'executiveSummary', 'verifiedOnlyMode',
     'workExperiences', 'skillCategories', 'portfolioProjects', 'answerBank'
   ];
 
@@ -111,14 +135,22 @@ export function validateUserProfile(value: unknown): ValidationResult {
   }
 
   const checks = [
-    ensureString(value.name, 'userProfile.name', 1, 200),
-    ensureString(value.headline, 'userProfile.headline', 1, 200),
-    ensureString(value.email, 'userProfile.email', 3, 200),
-    ensureString(value.phone, 'userProfile.phone', 1, 80),
-    ensureString(value.location, 'userProfile.location', 1, 200),
-    ensureString(value.timezone, 'userProfile.timezone', 1, 120),
-    ensureNumber(value.yearsExperience, 'userProfile.yearsExperience', 0, 80),
-    ensureString(value.executiveSummary, 'userProfile.executiveSummary', 1, 4000)
+    ensureString(value.name, 'userProfile.name', 0, 200),
+    ensureString(value.headline, 'userProfile.headline', 0, 200),
+    ensureString(value.email, 'userProfile.email', 0, 200),
+    ensureString(value.phone, 'userProfile.phone', 0, 80),
+    ensureString(value.location, 'userProfile.location', 0, 200),
+    ensureString(value.timezone, 'userProfile.timezone', 0, 120),
+    value.yearsExperience === undefined
+      ? { ok: true }
+      : ensureNumber(value.yearsExperience, 'userProfile.yearsExperience', 0, 80),
+    ensureString(value.executiveSummary, 'userProfile.executiveSummary', 0, 4000),
+    value.schemaVersion === undefined || value.schemaVersion === 2
+      ? { ok: true }
+      : { ok: false, error: 'userProfile.schemaVersion has an unsupported value' },
+    validateOptionalEvidence(value.headlineEvidence, 'userProfile.headlineEvidence'),
+    validateOptionalEvidence(value.yearsExperienceEvidence, 'userProfile.yearsExperienceEvidence'),
+    validateOptionalEvidence(value.executiveSummaryEvidence, 'userProfile.executiveSummaryEvidence')
   ];
 
   for (const check of checks) {
@@ -160,6 +192,19 @@ export function validateUserProfile(value: unknown): ValidationResult {
 
   const answerBankCheck = ensureArray(value.answerBank, 'userProfile.answerBank', 100);
   if (!answerBankCheck.ok) return answerBankCheck;
+  for (const item of value.answerBank as unknown[]) {
+    if (!isRecord(item)) return { ok: false, error: 'answer bank item must be an object' };
+    const checks = [
+      ensureString(item.id, 'answer bank id', 1, 200),
+      ensureString(item.prompt, 'answer bank prompt', 1, 1000),
+      ensureString(item.verifiedResponse, 'answer bank response', 0, 4000),
+      validateStringArray(item.tags, 'answer bank tags', 30, 200),
+      validateOptionalEvidence(item.evidence, 'answer bank evidence')
+    ];
+    for (const check of checks) {
+      if (!check.ok) return check;
+    }
+  }
 
   if (typeof value.verifiedOnlyMode !== 'boolean') {
     return { ok: false, error: 'userProfile.verifiedOnlyMode must be a boolean' };
