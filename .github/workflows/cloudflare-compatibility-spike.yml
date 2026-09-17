@@ -12,7 +12,7 @@ permissions:
 jobs:
   compatibility:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout spike branch
@@ -52,6 +52,43 @@ jobs:
             echo "dryrun_bytes=$(du -sb .wrangler-dryrun | cut -f1)"
           } | tee compat-results/worker-bundle.txt
 
+      - name: Start local named Firestore emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes firebase-tools@latest emulators:start \
+            --only firestore \
+            --project demo-cloudflare-compat \
+            --config firebase.compat.json \
+            > compat-results/firestore-emulator.log 2>&1 &
+          echo $! > compat-results/firestore.pid
+          for i in $(seq 1 60); do
+            if curl --silent --output /dev/null http://127.0.0.1:8080/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat compat-results/firestore-emulator.log
+          exit 1
+
+      - name: Seed non-sensitive named Firestore fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='http://127.0.0.1:8080/v1/projects/demo-cloudflare-compat/databases/ai-studio-49f27ecb-b053-4a8d-98b1-0f9445afb923/documents'
+          curl --fail --silent --show-error -X PATCH \
+            -H 'content-type: application/json' \
+            --data '{"fields":{"name":{"stringValue":"Compatibility User A"},"marker":{"stringValue":"profile-for-compat-user-a"}}}' \
+            "$BASE/users/compat-user-a/profile/vault" \
+            | tee compat-results/firestore-seed-a.json
+          echo
+          curl --fail --silent --show-error -X PATCH \
+            -H 'content-type: application/json' \
+            --data '{"fields":{"name":{"stringValue":"Compatibility User B"},"marker":{"stringValue":"profile-for-compat-user-b"}}}' \
+            "$BASE/users/compat-user-b/profile/vault" \
+            | tee compat-results/firestore-seed-b.json
+          echo
+
       - name: Start local workerd runtime
         shell: bash
         run: |
@@ -86,6 +123,18 @@ jobs:
             echo
           done
 
+      - name: Probe token-derived trusted Firestore REST path
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            'http://127.0.0.1:8787/compat/firestore-rest?userId=compat-user-b' \
+            | tee compat-results/firestore-rest.json
+          echo
+          grep -q '"fetchedExpectedUser": true' compat-results/firestore-rest.json
+          grep -q '"clientSuppliedUidIgnored": true' compat-results/firestore-rest.json
+          grep -q '"verifiedUid": "compat-user-a"' compat-results/firestore-rest.json
+
       - name: Probe API contract transport paths
         shell: bash
         run: |
@@ -110,12 +159,15 @@ jobs:
           ps -o pid,rss,vsz,etime,cmd -p "$PID" | tee compat-results/local-process.txt || true
           echo "Note: local process RSS is not equivalent to Cloudflare isolate memory." | tee -a compat-results/local-process.txt
 
-      - name: Stop local runtime
+      - name: Stop local runtimes
         if: always()
         shell: bash
         run: |
           if test -f compat-results/wrangler.pid; then
             kill "$(cat compat-results/wrangler.pid)" 2>/dev/null || true
+          fi
+          if test -f compat-results/firestore.pid; then
+            kill "$(cat compat-results/firestore.pid)" 2>/dev/null || true
           fi
 
       - name: Upload compatibility evidence
