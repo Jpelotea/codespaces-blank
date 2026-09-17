@@ -2,6 +2,7 @@ import * as jose from 'jose';
 import { GoogleGenAI } from '@google/genai';
 
 const PROJECT_ID = 'demo-cloudflare-compat';
+const DATABASE_ID = 'ai-studio-49f27ecb-b053-4a8d-98b1-0f9445afb923';
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 
 function json(data, status = 200) {
@@ -63,8 +64,7 @@ async function runtimeProbe(env) {
   };
 }
 
-async function joseProbe() {
-  const started = performance.now();
+async function createVerifiedFixtureIdentity() {
   const { publicKey, privateKey } = await jose.generateKeyPair('RS256');
   const token = await new jose.SignJWT({
     firebase: { sign_in_provider: 'password' },
@@ -72,7 +72,7 @@ async function joseProbe() {
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
     .setIssuer(`https://securetoken.google.com/${PROJECT_ID}`)
     .setAudience(PROJECT_ID)
-    .setSubject('compat-user-123')
+    .setSubject('compat-user-a')
     .setIssuedAt()
     .setExpirationTime('5m')
     .sign(privateKey);
@@ -81,6 +81,17 @@ async function joseProbe() {
     issuer: `https://securetoken.google.com/${PROJECT_ID}`,
     audience: PROJECT_ID,
   });
+
+  if (!payload.sub || typeof payload.sub !== 'string') {
+    throw new Error('Synthetic compatibility token did not contain a verified UID');
+  }
+
+  return { token, uid: payload.sub };
+}
+
+async function joseProbe() {
+  const started = performance.now();
+  const { token, uid } = await createVerifiedFixtureIdentity();
 
   let jwksFetch;
   try {
@@ -100,10 +111,11 @@ async function joseProbe() {
   const remoteResolverCreated = typeof jose.createRemoteJWKSet(new URL(GOOGLE_JWKS_URL)) === 'function';
 
   return {
-    ok: payload.sub === 'compat-user-123',
-    verifiedSubject: payload.sub,
-    issuer: payload.iss,
-    audience: payload.aud,
+    ok: uid === 'compat-user-a',
+    compactTokenCreated: typeof token === 'string' && token.split('.').length === 3,
+    verifiedSubject: uid,
+    expectedIssuer: `https://securetoken.google.com/${PROJECT_ID}`,
+    expectedAudience: PROJECT_ID,
     localSignAndVerify: true,
     remoteResolverCreated,
     googleJwksFetch: jwksFetch,
@@ -134,6 +146,40 @@ async function firebaseAdminProbe() {
       elapsedMs: Number((performance.now() - started).toFixed(3)),
     };
   }
+}
+
+async function trustedFirestoreRestProbe(request, env) {
+  const started = performance.now();
+  const { uid } = await createVerifiedFixtureIdentity();
+  const url = new URL(request.url);
+  const clientSuppliedUid = url.searchParams.get('userId');
+
+  const base = String(env.FIRESTORE_REST_BASE || '').replace(/\/$/, '');
+  if (!base) {
+    return {
+      ok: false,
+      error: 'FIRESTORE_REST_BASE is not configured for the compatibility fixture',
+    };
+  }
+
+  const profilePath = `projects/${encodeURIComponent(PROJECT_ID)}/databases/${encodeURIComponent(DATABASE_ID)}/documents/users/${encodeURIComponent(uid)}/profile/vault`;
+  const response = await fetch(`${base}/${profilePath}`, {
+    headers: { accept: 'application/json' },
+  });
+  const body = await response.json();
+
+  return {
+    ok: response.ok && uid === 'compat-user-a',
+    status: response.status,
+    verifiedUid: uid,
+    clientSuppliedUid,
+    clientSuppliedUidIgnored: Boolean(clientSuppliedUid) && clientSuppliedUid !== uid,
+    namedDatabase: DATABASE_ID,
+    resolvedDocumentName: body?.name || null,
+    resolvedProfileName: body?.fields?.name?.stringValue || null,
+    fetchedExpectedUser: body?.fields?.marker?.stringValue === 'profile-for-compat-user-a',
+    elapsedMs: Number((performance.now() - started).toFixed(3)),
+  };
 }
 
 async function expressProbe() {
@@ -217,6 +263,7 @@ export default {
       if (url.pathname === '/compat/runtime') return json(await runtimeProbe(env));
       if (url.pathname === '/compat/jose') return json(await joseProbe());
       if (url.pathname === '/compat/firebase-admin') return json(await firebaseAdminProbe());
+      if (url.pathname === '/compat/firestore-rest') return json(await trustedFirestoreRestProbe(request, env));
       if (url.pathname === '/compat/express') return json(await expressProbe());
       if (url.pathname === '/compat/genai') return json(await genaiProbe(env));
 
