@@ -26,8 +26,15 @@ import {
   createDraftExperience,
   createDraftProject,
   createDraftSkill,
-  parseOptionalYears
+  hasSubstantiveEvidenceValue,
+  parseOptionalYears,
+  updateAnswerEvidence,
+  updateExperienceEvidence,
+  updateProjectEvidence,
+  updateSkillEvidence,
+  updateTopLevelEvidence
 } from '../lib/vaultData';
+import { EvidenceControls } from './EvidenceControls';
 
 interface VerifiedProfileVaultViewProps {
   userProfile: UserProfile;
@@ -74,6 +81,11 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
     onUpdateProfile(profileState);
     setIsSavedNotice(true);
     setTimeout(() => setIsSavedNotice(false), 2500);
+  };
+
+  const persistEvidenceTransition = (updated: UserProfile) => {
+    setProfileState(updated);
+    onUpdateProfile(updated);
   };
 
   // Add new experience
@@ -483,6 +495,12 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
                     </span>
                   ))}
                 </div>
+                <EvidenceControls
+                  evidence={exp.evidence}
+                  onTransition={(evidence) => persistEvidenceTransition(
+                    updateExperienceEvidence(profileState, exp.id, evidence)
+                  )}
+                />
               </div>
             ))}
           </div>
@@ -568,13 +586,18 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {cat.skills.map((skill, sIdx) => (
-                    <div
-                      key={sIdx}
-                      className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs flex items-center gap-1.5"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="font-medium text-slate-800">{skill.name}</span>
-                      <span className="text-[10px] text-slate-400">({skill.level})</span>
+                    <div key={sIdx} className="rounded-lg bg-slate-50 border border-slate-200 p-2 text-xs space-y-2">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="font-medium text-slate-800">{skill.name}</span>
+                        <span className="text-[10px] text-slate-400">({skill.level})</span>
+                      </div>
+                      <EvidenceControls
+                        evidence={skill.evidence}
+                        onTransition={(evidence) => persistEvidenceTransition(
+                          updateSkillEvidence(profileState, cat.id, sIdx, evidence)
+                        )}
+                      />
                     </div>
                   ))}
                 </div>
@@ -731,6 +754,12 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
                     </span>
                   ))}
                 </div>
+                <EvidenceControls
+                  evidence={proj.evidence}
+                  onTransition={(evidence) => persistEvidenceTransition(
+                    updateProjectEvidence(profileState, proj.id, evidence)
+                  )}
+                />
               </div>
             ))}
           </div>
@@ -764,6 +793,13 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
                 <p className="text-xs text-slate-700 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
                   {ans.verifiedResponse}
                 </p>
+                <EvidenceControls
+                  evidence={ans.evidence}
+                  hasContent={Boolean(ans.prompt.trim() && ans.verifiedResponse.trim())}
+                  onTransition={(evidence) => persistEvidenceTransition(
+                    updateAnswerEvidence(profileState, ans.id, evidence)
+                  )}
+                />
               </div>
             ))}
           </div>
@@ -791,6 +827,13 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
                 value={profileState.headline}
                 onChange={(e) => setProfileState(applyMaterialProfileEdit(profileState, 'headline', e.target.value))}
                 className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300"
+              />
+              <EvidenceControls
+                evidence={profileState.headlineEvidence}
+                hasContent={hasSubstantiveEvidenceValue(profileState.headline)}
+                onTransition={(evidence) => persistEvidenceTransition(
+                  updateTopLevelEvidence(profileState, 'headlineEvidence', evidence)
+                )}
               />
             </div>
             <div>
@@ -834,6 +877,13 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
                 ))}
                 className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300"
               />
+              <EvidenceControls
+                evidence={profileState.yearsExperienceEvidence}
+                hasContent={hasSubstantiveEvidenceValue(profileState.yearsExperience)}
+                onTransition={(evidence) => persistEvidenceTransition(
+                  updateTopLevelEvidence(profileState, 'yearsExperienceEvidence', evidence)
+                )}
+              />
             </div>
           </div>
 
@@ -844,6 +894,13 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
               value={profileState.executiveSummary}
               onChange={(e) => setProfileState(applyMaterialProfileEdit(profileState, 'executiveSummary', e.target.value))}
               className="w-full text-xs p-3 rounded-lg border border-slate-300 leading-relaxed"
+            />
+            <EvidenceControls
+              evidence={profileState.executiveSummaryEvidence}
+              hasContent={hasSubstantiveEvidenceValue(profileState.executiveSummary)}
+              onTransition={(evidence) => persistEvidenceTransition(
+                updateTopLevelEvidence(profileState, 'executiveSummaryEvidence', evidence)
+              )}
             />
           </div>
 

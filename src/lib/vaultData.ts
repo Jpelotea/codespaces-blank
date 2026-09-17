@@ -1,4 +1,6 @@
 import type {
+  ApplicationAnswerBankItem,
+  EvidenceMeta,
   PortfolioProject,
   SkillCategory,
   SkillItem,
@@ -104,6 +106,10 @@ export function parseOptionalYears(value: string): number | undefined {
   return Number.isFinite(years) && years >= 0 ? years : undefined;
 }
 
+export function hasSubstantiveEvidenceValue(value: string | number | undefined): boolean {
+  return typeof value === 'number' ? Number.isFinite(value) : Boolean(value?.trim());
+}
+
 type MaterialProfileField = 'headline' | 'yearsExperience' | 'executiveSummary';
 
 const evidenceFieldByProfileField = {
@@ -124,4 +130,69 @@ export function applyMaterialProfileEdit<K extends MaterialProfileField>(
     [field]: value,
     [evidenceField]: demoteEvidenceAfterMaterialEdit(profile[evidenceField])
   };
+}
+
+export function updateExperienceEvidence(
+  profile: UserProfile,
+  experienceId: string,
+  evidence: EvidenceMeta
+): UserProfile {
+  return {
+    ...profile,
+    workExperiences: profile.workExperiences.map((experience) =>
+      experience.id === experienceId ? { ...experience, evidence } : experience)
+  };
+}
+
+export function updateSkillEvidence(
+  profile: UserProfile,
+  categoryId: string,
+  skillIndex: number,
+  evidence: EvidenceMeta
+): UserProfile {
+  return {
+    ...profile,
+    skillCategories: profile.skillCategories.map((category) =>
+      category.id === categoryId
+        ? {
+            ...category,
+            skills: category.skills.map((skill, index) =>
+              index === skillIndex ? { ...skill, evidence } : skill)
+          }
+        : category)
+  };
+}
+
+export function updateProjectEvidence(
+  profile: UserProfile,
+  projectId: string,
+  evidence: EvidenceMeta
+): UserProfile {
+  return {
+    ...profile,
+    portfolioProjects: profile.portfolioProjects.map((project) =>
+      project.id === projectId ? { ...project, evidence } : project)
+  };
+}
+
+export function updateAnswerEvidence(
+  profile: UserProfile,
+  answerId: string,
+  evidence: EvidenceMeta
+): UserProfile {
+  return {
+    ...profile,
+    answerBank: profile.answerBank.map((answer: ApplicationAnswerBankItem) =>
+      answer.id === answerId ? { ...answer, evidence } : answer)
+  };
+}
+
+type TopLevelEvidenceField = 'headlineEvidence' | 'yearsExperienceEvidence' | 'executiveSummaryEvidence';
+
+export function updateTopLevelEvidence(
+  profile: UserProfile,
+  field: TopLevelEvidenceField,
+  evidence: EvidenceMeta
+): UserProfile {
+  return { ...profile, [field]: evidence };
 }
