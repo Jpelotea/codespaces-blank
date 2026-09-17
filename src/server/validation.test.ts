@@ -6,6 +6,7 @@ import {
   validateFollowUpDraft,
   validateUserProfile
 } from './validation';
+import { createBlankUserProfile } from '../lib/profileEvidence';
 
 describe('Server payload validation', () => {
   it('accepts a valid user profile and rejects missing required fields', () => {
@@ -28,6 +29,45 @@ describe('Server payload validation', () => {
 
     expect(validateUserProfile(valid).ok).toBe(true);
     expect(validateUserProfile({ ...valid, name: undefined }).ok).toBe(false);
+  });
+
+  it('accepts a blank current profile and backward-compatible legacy input', () => {
+    expect(validateUserProfile(createBlankUserProfile()).ok).toBe(true);
+
+    const legacy = {
+      name: 'Jordan Lee', headline: '', email: '', phone: '', location: '', timezone: '',
+      targetRoles: [], executiveSummary: '', verifiedOnlyMode: false,
+      workExperiences: [], skillCategories: [], portfolioProjects: [], answerBank: []
+    };
+    expect(validateUserProfile(legacy).ok).toBe(true);
+  });
+
+  it('validates evidence metadata without treating legacy flags as provenance', () => {
+    const profile = createBlankUserProfile();
+    profile.skillCategories = [{
+      id: 'category-1',
+      categoryName: 'Operations',
+      skills: [{
+        name: 'Scheduling',
+        level: 'Proficient',
+        isVerified: true,
+        evidence: { status: 'DRAFT', origin: 'legacy' }
+      }]
+    }];
+    expect(validateUserProfile(profile).ok).toBe(true);
+
+    profile.skillCategories[0].skills[0].evidence = {
+      status: 'SOURCE_BACKED', origin: 'resume_import'
+    };
+    expect(validateUserProfile(profile).ok).toBe(false);
+  });
+
+  it('rejects demo and generated content promoted to eligible evidence', () => {
+    for (const origin of ['demo', 'generated'] as const) {
+      const profile = createBlankUserProfile();
+      profile.headlineEvidence = { status: 'USER_CONFIRMED', origin };
+      expect(validateUserProfile(profile).ok).toBe(false);
+    }
   });
 
   it('rejects out-of-range job-fit scores and missing strengths metadata', () => {

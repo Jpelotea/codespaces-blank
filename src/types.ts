@@ -1,3 +1,20 @@
+export type EvidenceStatus = 'DRAFT' | 'USER_CONFIRMED' | 'SOURCE_BACKED';
+
+export type EvidenceOrigin =
+  | 'manual'
+  | 'resume_import'
+  | 'portfolio_import'
+  | 'legacy'
+  | 'demo'
+  | 'generated';
+
+export interface EvidenceMeta {
+  status: EvidenceStatus;
+  origin: EvidenceOrigin;
+  sourceRef?: string;
+  confirmedAt?: string;
+}
+
 export interface WorkExperience {
   id: string;
   title: string;
@@ -8,6 +25,7 @@ export interface WorkExperience {
   description: string;
   verifiedAchievements: string[];
   toolsUsed: string[];
+  evidence?: EvidenceMeta;
 }
 
 export interface SkillItem {
@@ -15,6 +33,7 @@ export interface SkillItem {
   level: 'Expert' | 'Proficient' | 'Familiar';
   isVerified: boolean;
   yearsExperience?: number;
+  evidence?: EvidenceMeta;
 }
 
 export interface SkillCategory {
@@ -28,9 +47,10 @@ export interface PortfolioProject {
   title: string;
   roleCategory: 'Executive Support' | 'Workflow Automation' | 'Business Operations' | 'Project Management';
   description: string;
-  verifiedImpactMetric: string;
+  verifiedImpactMetric?: string;
   toolsUsed: string[];
-  deliverableSnippetOrLink: string;
+  deliverableSnippetOrLink?: string;
+  evidence?: EvidenceMeta;
 }
 
 export interface ApplicationAnswerBankItem {
@@ -38,9 +58,12 @@ export interface ApplicationAnswerBankItem {
   prompt: string;
   verifiedResponse: string;
   tags: string[];
+  evidence?: EvidenceMeta;
 }
 
 export interface UserProfile {
+  /** Version 2 adds evidence metadata while remaining readable from legacy records. */
+  schemaVersion?: 2;
   name: string;
   headline: string;
   email: string;
@@ -48,13 +71,16 @@ export interface UserProfile {
   location: string;
   timezone: string;
   targetRoles: string[];
-  yearsExperience: number;
+  yearsExperience?: number;
   executiveSummary: string;
   verifiedOnlyMode: boolean; // strictly forbids hallucinating or inventing experiences
   workExperiences: WorkExperience[];
   skillCategories: SkillCategory[];
   portfolioProjects: PortfolioProject[];
   answerBank: ApplicationAnswerBankItem[];
+  headlineEvidence?: EvidenceMeta;
+  yearsExperienceEvidence?: EvidenceMeta;
+  executiveSummaryEvidence?: EvidenceMeta;
 }
 
 export interface JobPosting {
