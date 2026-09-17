@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { EvidenceMeta, UserProfile } from '../types';
 import {
+  confirmEvidence,
   createBlankUserProfile,
   demoteEvidenceAfterMaterialEdit,
   getEvidenceValidationError,
   isEligibleEvidence,
+  markEvidenceSourceBacked,
   normalizeProfileEvidence
 } from './profileEvidence';
 
@@ -39,6 +41,8 @@ const legacyProfile = (): UserProfile => ({
 });
 
 describe('professional evidence contract', () => {
+  const timestamp = '2026-09-17T10:30:00.000Z';
+
   it('creates a blank profile with identity only and no professional facts', () => {
     const profile = createBlankUserProfile({ name: 'Jordan Lee', email: 'jordan@example.com' });
 
@@ -116,4 +120,58 @@ describe('professional evidence contract', () => {
       sourceRef: 'resume:entry-1'
     });
   });
+
+  it.each(['legacy', 'manual'] as const)(
+    'deliberately confirms a DRAFT/%s item while preserving origin',
+    (origin) => {
+      expect(confirmEvidence({ status: 'DRAFT', origin }, timestamp)).toEqual({
+        status: 'USER_CONFIRMED',
+        origin,
+        confirmedAt: timestamp
+      });
+    }
+  );
+
+  it('marks draft evidence source-backed with a trimmed explicit reference', () => {
+    expect(markEvidenceSourceBacked(
+      { status: 'DRAFT', origin: 'legacy' },
+      '  resume:work-entry-2  ',
+      timestamp
+    )).toEqual({
+      status: 'SOURCE_BACKED',
+      origin: 'legacy',
+      sourceRef: 'resume:work-entry-2',
+      confirmedAt: timestamp
+    });
+  });
+
+  it('marks user-confirmed evidence source-backed without changing its origin', () => {
+    expect(markEvidenceSourceBacked(
+      { status: 'USER_CONFIRMED', origin: 'manual', confirmedAt: 'earlier' },
+      'portfolio:item-1',
+      timestamp
+    )).toEqual({
+      status: 'SOURCE_BACKED',
+      origin: 'manual',
+      sourceRef: 'portfolio:item-1',
+      confirmedAt: timestamp
+    });
+  });
+
+  it('rejects an empty source reference', () => {
+    expect(markEvidenceSourceBacked(
+      { status: 'DRAFT', origin: 'legacy' },
+      '   ',
+      timestamp
+    )).toBeUndefined();
+  });
+
+  it.each(['demo', 'generated'] as const)(
+    'does not promote DRAFT/%s content through either explicit transition',
+    (origin) => {
+      const meta: EvidenceMeta = { status: 'DRAFT', origin };
+      expect(confirmEvidence(meta, timestamp)).toBeUndefined();
+      expect(markEvidenceSourceBacked(meta, `${origin}:item-1`, timestamp)).toBeUndefined();
+    }
+  );
 });

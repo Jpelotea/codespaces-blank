@@ -70,6 +70,50 @@ export function createDraftEvidence(origin: EvidenceOrigin = 'manual'): Evidence
   return { status: 'DRAFT', origin };
 }
 
+export function confirmEvidence(
+  meta: EvidenceMeta,
+  confirmedAt: string
+): EvidenceMeta | undefined {
+  if (
+    !isValidEvidenceMeta(meta) ||
+    meta.status !== 'DRAFT' ||
+    excludedEvidenceOrigins.includes(meta.origin) ||
+    !isNonEmptyString(confirmedAt)
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...meta,
+    status: 'USER_CONFIRMED',
+    confirmedAt
+  };
+}
+
+export function markEvidenceSourceBacked(
+  meta: EvidenceMeta,
+  sourceRef: string,
+  confirmedAt: string
+): EvidenceMeta | undefined {
+  const normalizedSourceRef = sourceRef.trim();
+  if (
+    !isValidEvidenceMeta(meta) ||
+    (meta.status !== 'DRAFT' && meta.status !== 'USER_CONFIRMED') ||
+    excludedEvidenceOrigins.includes(meta.origin) ||
+    !normalizedSourceRef ||
+    !isNonEmptyString(confirmedAt)
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...meta,
+    status: 'SOURCE_BACKED',
+    sourceRef: normalizedSourceRef,
+    confirmedAt
+  };
+}
+
 function normalizeEvidenceMeta(value: unknown): EvidenceMeta {
   return isValidEvidenceMeta(value) ? { ...value } : createDraftEvidence('legacy');
 }
