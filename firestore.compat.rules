@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Phase 0.5 local emulator fixture only. Never deploy this rules file.
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
