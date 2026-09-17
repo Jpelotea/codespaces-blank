@@ -11,6 +11,7 @@
   },
   "vars": {
     "PHASE_0_5_RUNTIME_MARKER": "worker-runtime-marker",
-    "GEMINI_API_KEY": "phase-0.5-invalid-nonsecret-key"
+    "GEMINI_API_KEY": "phase-0.5-invalid-nonsecret-key",
+    "FIRESTORE_REST_BASE": "http://127.0.0.1:8080/v1"
   }
 }
