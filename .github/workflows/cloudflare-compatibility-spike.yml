@@ -1,0 +1,127 @@
+name: Cloudflare Compatibility Spike
+
+on:
+  push:
+    branches:
+      - spike/cloudflare-compatibility
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout spike branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install repository dependencies
+        run: npm ci
+
+      - name: Build existing application
+        run: npm run build
+
+      - name: Record static build measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p compat-results
+          {
+            echo "build_files=$(find dist -type f | wc -l)"
+            echo "build_bytes=$(du -sb dist | cut -f1)"
+            echo "index_html=$(test -f dist/index.html && echo yes || echo no)"
+            echo "server_bundle=$(test -f dist/server.cjs && echo yes || echo no)"
+          } | tee compat-results/build.txt
+
+      - name: Cloudflare dry-run bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@latest deploy --dry-run --config wrangler.compat.jsonc --outdir .wrangler-dryrun 2>&1 | tee compat-results/wrangler-dry-run.txt
+          {
+            echo "dryrun_files=$(find .wrangler-dryrun -type f | wc -l)"
+            echo "dryrun_bytes=$(du -sb .wrangler-dryrun | cut -f1)"
+          } | tee compat-results/worker-bundle.txt
+
+      - name: Start local workerd runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@latest dev --local --config wrangler.compat.jsonc --port 8787 > compat-results/wrangler-dev.log 2>&1 &
+          echo $! > compat-results/wrangler.pid
+          for i in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:8787/compat/runtime >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat compat-results/wrangler-dev.log
+          exit 1
+
+      - name: Probe static assets and SPA fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error -D compat-results/root-headers.txt http://127.0.0.1:8787/ -o compat-results/root.html
+          curl --fail --silent --show-error -D compat-results/spa-headers.txt http://127.0.0.1:8787/phase-0-5-client-route -o compat-results/spa.html
+          grep -qi '<!doctype html' compat-results/root.html
+          grep -qi '<!doctype html' compat-results/spa.html
+          echo "root_and_spa_fallback=pass" | tee compat-results/static-assets.txt
+
+      - name: Probe Worker runtime and packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for endpoint in runtime jose firebase-admin express genai; do
+            curl --fail --silent --show-error "http://127.0.0.1:8787/compat/${endpoint}" | tee "compat-results/${endpoint}.json"
+            echo
+          done
+
+      - name: Probe API contract transport paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error http://127.0.0.1:8787/api/health | tee compat-results/api-health.json
+          echo
+          for endpoint in analyze-job generate-materials interview-prep followup-draft; do
+            curl --fail --silent --show-error \
+              -X POST \
+              -H 'content-type: application/json' \
+              -H 'authorization: Bearer compatibility-fixture' \
+              --data '{"compatibilityFixture":true}' \
+              "http://127.0.0.1:8787/api/${endpoint}" | tee "compat-results/api-${endpoint}.json"
+            echo
+          done
+
+      - name: Summarize process resource evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          PID=$(cat compat-results/wrangler.pid)
+          ps -o pid,rss,vsz,etime,cmd -p "$PID" | tee compat-results/local-process.txt || true
+          echo "Note: local process RSS is not equivalent to Cloudflare isolate memory." | tee -a compat-results/local-process.txt
+
+      - name: Stop local runtime
+        if: always()
+        shell: bash
+        run: |
+          if test -f compat-results/wrangler.pid; then
+            kill "$(cat compat-results/wrangler.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-compatibility-evidence
+          path: compat-results/
+          if-no-files-found: warn
