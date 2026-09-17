@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
-import { 
-  UserProfile, 
-  ApplicationRecord, 
-  ApplicationStatus, 
-  JobPosting, 
-  JobFitAnalysis, 
-  TailoredMaterials 
+import {
+  UserProfile,
+  ApplicationRecord,
+  ApplicationStatus,
+  JobPosting,
+  JobFitAnalysis,
+  TailoredMaterials
 } from './types';
 import { INITIAL_USER_PROFILE } from './data/defaultProfile';
 import { INITIAL_SAMPLE_APPLICATIONS, SAMPLE_JOB_PRESETS } from './data/sampleJobs';
@@ -17,17 +17,22 @@ import { ApplicationTrackerView } from './components/ApplicationTrackerView';
 import { VerifiedProfileVaultView } from './components/VerifiedProfileVaultView';
 import { InterviewStudioView } from './components/InterviewStudioView';
 import { checkServerHealth } from './services/api';
-import { 
-  auth, 
-  logoutUser, 
-  getUserProfileFromFirestore, 
-  saveUserProfileToFirestore, 
-  getApplicationsFromFirestore, 
-  saveApplicationToFirestore, 
+import {
+  auth,
+  logoutUser,
+  saveUserProfileToFirestore,
+  saveApplicationToFirestore,
   deleteApplicationFromFirestore,
   initializeUserWorkspace
 } from './lib/firebase';
-import { ShieldCheck, Cloud, UserCheck, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
+import {
+  AUTH_PENDING_WORKSPACE_SESSION,
+  canPersistAuthenticatedWorkspace,
+  getWorkspaceSessionKey,
+  isWorkspaceSessionCurrent,
+  shouldApplyWorkspaceLoad,
+} from './lib/workspaceSession';
+import { Cloud, ArrowRight } from 'lucide-react';
 
 const getProfileStorageKey = (uid?: string | null) => `ai_job_copilot_profile_${uid ?? 'guest'}`;
 const getAppsStorageKey = (uid?: string | null) => `ai_job_copilot_apps_${uid ?? 'guest'}`;
@@ -43,10 +48,18 @@ export default function App() {
 
   // Firebase Auth State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const currentUserRef = useRef<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  // Account-session boundary. A change here invalidates all callbacks and local
+  // feature state that originated from the previous authenticated identity.
+  const [workspaceSessionKey, setWorkspaceSessionKey] = useState(AUTH_PENDING_WORKSPACE_SESSION);
+  const workspaceSessionRef = useRef(AUTH_PENDING_WORKSPACE_SESSION);
+  const [workspaceOwnerUid, setWorkspaceOwnerUid] = useState<string | null>(null);
+  const workspaceOwnerUidRef = useRef<string | null>(null);
 
   // Server health & Gemini status
   const [hasGeminiKey, setHasGeminiKey] = useState<boolean>(true);
@@ -68,35 +81,63 @@ export default function App() {
     });
   }, []);
 
-  // Listen to Firebase Auth state
+  // Listen to Firebase Auth state. Identity changes invalidate the previous
+  // workspace before any Firestore data for the next account is loaded.
   useEffect(() => {
     let authChangeId = 0;
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       const changeId = ++authChangeId;
+      const nextSessionKey = getWorkspaceSessionKey(user);
+
+      currentUserRef.current = user;
+      workspaceSessionRef.current = nextSessionKey;
+      workspaceOwnerUidRef.current = null;
+
       setCurrentUser(user);
-      setAuthLoading(false);
+      setWorkspaceSessionKey(nextSessionKey);
+      setWorkspaceOwnerUid(null);
+      setAuthLoading(true);
+      setIsSyncing(false);
+      setIsAuthModalOpen(false);
+
+      // Clear all App-owned account-specific state immediately. Child feature
+      // state is cleared by the workspaceSessionKey remount below.
+      setActiveJob(null);
+      setActiveAnalysis(null);
+      setUserProfile(INITIAL_USER_PROFILE);
+      setApplications(user && !user.isAnonymous ? [] : INITIAL_SAMPLE_APPLICATIONS);
 
       if (user && !user.isAnonymous) {
         setIsSyncing(true);
         try {
-          // Sync workspace from Firestore for authenticated accounts only.
           const { profile, applications: userApps } = await initializeUserWorkspace(user, true);
-          if (changeId !== authChangeId) return;
+          if (!shouldApplyWorkspaceLoad(
+            changeId,
+            authChangeId,
+            user.uid,
+            workspaceSessionRef.current,
+          )) return;
 
+          workspaceOwnerUidRef.current = user.uid;
+          setWorkspaceOwnerUid(user.uid);
           setUserProfile(profile);
           setApplications(userApps.length > 0 ? userApps : INITIAL_SAMPLE_APPLICATIONS);
           clearSensitiveStorage(user.uid);
         } catch (err) {
-          console.error('Error syncing user workspace from Firestore:', err);
+          if (changeId === authChangeId) {
+            console.error('Error syncing user workspace from Firestore:', err);
+          }
         } finally {
-          if (changeId === authChangeId) setIsSyncing(false);
+          if (changeId === authChangeId) {
+            setIsSyncing(false);
+            setAuthLoading(false);
+          }
         }
       } else {
         // Guest sessions and logged-out state use only the privacy-safe preview sandbox.
         clearSensitiveStorage(user?.uid);
-        setUserProfile(INITIAL_USER_PROFILE);
-        setApplications(INITIAL_SAMPLE_APPLICATIONS);
+        setAuthLoading(false);
       }
     });
 
@@ -106,12 +147,28 @@ export default function App() {
     };
   }, []);
 
+  const isCurrentWorkspaceAction = (sourceSessionKey: string) =>
+    isWorkspaceSessionCurrent(sourceSessionKey, workspaceSessionRef.current);
+
+  const getPersistableUser = (sourceSessionKey: string): User | null => {
+    const user = currentUserRef.current;
+    return canPersistAuthenticatedWorkspace(
+      user,
+      workspaceOwnerUidRef.current,
+      sourceSessionKey,
+      workspaceSessionRef.current,
+    ) ? user : null;
+  };
+
   // Handler: Save role to tracker & Firestore
   const handleSaveToTracker = async (
-    job: JobPosting, 
-    analysis?: JobFitAnalysis, 
+    sourceSessionKey: string,
+    job: JobPosting,
+    analysis?: JobFitAnalysis,
     materials?: TailoredMaterials
   ) => {
+    if (!isCurrentWorkspaceAction(sourceSessionKey)) return;
+
     const existingIndex = applications.findIndex(a => a.job.title === job.title && a.job.company === job.company);
     const recordToSave: ApplicationRecord = existingIndex >= 0
       ? {
@@ -134,6 +191,7 @@ export default function App() {
           notes: `Analyzed with ${analysis?.overallScore || 90}% match score.`,
           updatedAt: new Date().toISOString()
         };
+
     setApplications(prev => {
       const currentIndex = prev.findIndex(a => a.id === recordToSave.id);
       if (currentIndex >= 0) {
@@ -147,21 +205,27 @@ export default function App() {
     setActiveJob(job);
     if (analysis) setActiveAnalysis(analysis);
 
-    // Persist to Firestore if user is authenticated
-    if (currentUser && !currentUser.isAnonymous) {
+    const persistUser = getPersistableUser(sourceSessionKey);
+    if (persistUser) {
       setIsSyncing(true);
       try {
-        await saveApplicationToFirestore(currentUser.uid, recordToSave!);
+        await saveApplicationToFirestore(persistUser.uid, recordToSave);
       } catch (e) {
         console.error('Failed to sync application to Firestore:', e);
       } finally {
-        setIsSyncing(false);
+        if (isCurrentWorkspaceAction(sourceSessionKey)) setIsSyncing(false);
       }
     }
   };
 
   // Handler: Update application status with dateApplied automation
-  const handleUpdateApplicationStatus = async (id: string, newStatus: ApplicationStatus) => {
+  const handleUpdateApplicationStatus = async (
+    sourceSessionKey: string,
+    id: string,
+    newStatus: ApplicationStatus,
+  ) => {
+    if (!isCurrentWorkspaceAction(sourceSessionKey)) return;
+
     const existing = applications.find(a => a.id === id);
     if (!existing) return;
     const updatedRecord: ApplicationRecord = {
@@ -172,46 +236,59 @@ export default function App() {
     };
     setApplications(prev => prev.map(a => a.id === id ? updatedRecord : a));
 
-    if (currentUser && !currentUser.isAnonymous && updatedRecord) {
+    const persistUser = getPersistableUser(sourceSessionKey);
+    if (persistUser) {
       setIsSyncing(true);
       try {
-        await saveApplicationToFirestore(currentUser.uid, updatedRecord);
+        await saveApplicationToFirestore(persistUser.uid, updatedRecord);
       } catch (e) {
         console.error('Failed to update status in Firestore:', e);
       } finally {
-        setIsSyncing(false);
+        if (isCurrentWorkspaceAction(sourceSessionKey)) setIsSyncing(false);
       }
     }
   };
 
   // Handler: Delete application
-  const handleDeleteApplication = async (id: string) => {
-    setApplications(prev => {
-      const updated = prev.filter(a => a.id !== id);
-      return updated;
-    });
+  const handleDeleteApplication = async (sourceSessionKey: string, id: string) => {
+    if (!isCurrentWorkspaceAction(sourceSessionKey)) return;
 
-    if (currentUser && !currentUser.isAnonymous) {
+    setApplications(prev => prev.filter(a => a.id !== id));
+
+    const persistUser = getPersistableUser(sourceSessionKey);
+    if (persistUser) {
       setIsSyncing(true);
       try {
-        await deleteApplicationFromFirestore(currentUser.uid, id);
+        await deleteApplicationFromFirestore(persistUser.uid, id);
       } catch (e) {
         console.error('Failed to delete application in Firestore:', e);
       } finally {
-        setIsSyncing(false);
+        if (isCurrentWorkspaceAction(sourceSessionKey)) setIsSyncing(false);
       }
     }
   };
 
   // Handler: Open application in interview prep
-  const handleSelectApplicationForInterview = (app: ApplicationRecord) => {
+  const handleSelectApplicationForInterview = (
+    sourceSessionKey: string,
+    app: ApplicationRecord,
+  ) => {
+    if (!isCurrentWorkspaceAction(sourceSessionKey)) return;
     setActiveJob(app.job);
     setActiveAnalysis(app.fitAnalysis || null);
     setActiveTab('interview');
   };
 
   // Handler: Update notes and next action
-  const handleUpdateNotes = async (id: string, notes: string, nextActionDate?: string, nextActionNote?: string) => {
+  const handleUpdateNotes = async (
+    sourceSessionKey: string,
+    id: string,
+    notes: string,
+    nextActionDate?: string,
+    nextActionNote?: string,
+  ) => {
+    if (!isCurrentWorkspaceAction(sourceSessionKey)) return;
+
     const existing = applications.find(a => a.id === id);
     if (!existing) return;
     const modifiedRecord: ApplicationRecord = {
@@ -223,57 +300,80 @@ export default function App() {
     };
     setApplications(prev => prev.map(a => a.id === id ? modifiedRecord : a));
 
-    if (currentUser && !currentUser.isAnonymous && modifiedRecord) {
+    const persistUser = getPersistableUser(sourceSessionKey);
+    if (persistUser) {
       setIsSyncing(true);
       try {
-        await saveApplicationToFirestore(currentUser.uid, modifiedRecord);
+        await saveApplicationToFirestore(persistUser.uid, modifiedRecord);
       } catch (e) {
         console.error('Failed to update notes in Firestore:', e);
       } finally {
-        setIsSyncing(false);
+        if (isCurrentWorkspaceAction(sourceSessionKey)) setIsSyncing(false);
       }
     }
   };
 
   // Handler: Full application record update (for interview dates, deadlines, and schedules)
-  const handleUpdateApplication = async (updatedApp: ApplicationRecord) => {
-    setApplications(prev => {
-      const updated = prev.map(a => a.id === updatedApp.id ? { ...updatedApp, updatedAt: new Date().toISOString() } : a);
-      return updated;
-    });
+  const handleUpdateApplication = async (
+    sourceSessionKey: string,
+    updatedApp: ApplicationRecord,
+  ) => {
+    if (!isCurrentWorkspaceAction(sourceSessionKey)) return;
 
-    if (currentUser && !currentUser.isAnonymous) {
+    const recordToSave = { ...updatedApp, updatedAt: new Date().toISOString() };
+    setApplications(prev => prev.map(a => a.id === updatedApp.id ? recordToSave : a));
+
+    const persistUser = getPersistableUser(sourceSessionKey);
+    if (persistUser) {
       setIsSyncing(true);
       try {
-        await saveApplicationToFirestore(currentUser.uid, { ...updatedApp, updatedAt: new Date().toISOString() });
+        await saveApplicationToFirestore(persistUser.uid, recordToSave);
       } catch (e) {
         console.error('Failed to update application in Firestore:', e);
       } finally {
-        setIsSyncing(false);
+        if (isCurrentWorkspaceAction(sourceSessionKey)) setIsSyncing(false);
       }
     }
   };
 
   // Handler: Update profile in state and Firestore
-  const handleUpdateProfile = async (updated: UserProfile) => {
+  const handleUpdateProfile = async (
+    sourceSessionKey: string,
+    updated: UserProfile,
+  ) => {
+    if (!isCurrentWorkspaceAction(sourceSessionKey)) return;
+
     setUserProfile(updated);
 
-    if (currentUser && !currentUser.isAnonymous) {
+    const persistUser = getPersistableUser(sourceSessionKey);
+    if (persistUser) {
       setIsSyncing(true);
       try {
-        await saveUserProfileToFirestore(currentUser.uid, updated);
+        await saveUserProfileToFirestore(persistUser.uid, updated);
       } catch (e) {
         console.error('Failed to save profile in Firestore:', e);
       } finally {
-        setIsSyncing(false);
+        if (isCurrentWorkspaceAction(sourceSessionKey)) setIsSyncing(false);
       }
     }
   };
 
-  // Handler: Logout
+  // Handler: Logout. Invalidate the current workspace before the async sign-out
+  // completes so no stale child callback can mutate or persist account data.
   const handleLogout = async () => {
+    const pendingSessionKey = AUTH_PENDING_WORKSPACE_SESSION;
+    workspaceSessionRef.current = pendingSessionKey;
+    workspaceOwnerUidRef.current = null;
+    setWorkspaceSessionKey(pendingSessionKey);
+    setWorkspaceOwnerUid(null);
+    setAuthLoading(true);
+    setActiveJob(null);
+    setActiveAnalysis(null);
+    setUserProfile(INITIAL_USER_PROFILE);
+    setApplications([]);
+
     try {
-      clearSensitiveStorage(currentUser?.uid);
+      clearSensitiveStorage(currentUserRef.current?.uid);
       await logoutUser();
     } catch (e) {
       console.error('Logout error:', e);
@@ -329,50 +429,89 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'analyzer' && (
-          <JobAnalyzerView
-            userProfile={userProfile}
-            onSaveToTracker={handleSaveToTracker}
-            onOpenInterviewPrep={(job, analysis) => {
-              setActiveJob(job);
-              if (analysis) setActiveAnalysis(analysis);
-              setActiveTab('interview');
-            }}
-          />
-        )}
+      {/* Main Content Area. Authenticated transitions render a safe loading state
+          instead of the previous account while the next workspace is loading. */}
+      <main
+        key={workspaceSessionKey}
+        className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6"
+      >
+        {authLoading ? (
+          <div className="min-h-[45vh] flex items-center justify-center">
+            <div className="text-center space-y-2" role="status" aria-live="polite">
+              <div className="w-8 h-8 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto" />
+              <p className="text-sm font-medium text-slate-600">Loading secure workspace…</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'analyzer' && (
+              <JobAnalyzerView
+                userProfile={userProfile}
+                onSaveToTracker={(job, analysis, materials) =>
+                  handleSaveToTracker(workspaceSessionKey, job, analysis, materials)
+                }
+                onOpenInterviewPrep={(job, analysis) => {
+                  if (!isCurrentWorkspaceAction(workspaceSessionKey)) return;
+                  setActiveJob(job);
+                  if (analysis) setActiveAnalysis(analysis);
+                  setActiveTab('interview');
+                }}
+              />
+            )}
 
-        {activeTab === 'pipeline' && (
-          <ApplicationTrackerView
-            applications={applications}
-            onUpdateApplicationStatus={handleUpdateApplicationStatus}
-            onDeleteApplication={handleDeleteApplication}
-            onSelectApplicationForInterview={handleSelectApplicationForInterview}
-            onOpenNewJobAnalysis={() => setActiveTab('analyzer')}
-            onUpdateNotes={handleUpdateNotes}
-          />
-        )}
+            {activeTab === 'pipeline' && (
+              <ApplicationTrackerView
+                applications={applications}
+                onUpdateApplicationStatus={(id, status) =>
+                  handleUpdateApplicationStatus(workspaceSessionKey, id, status)
+                }
+                onDeleteApplication={(id) =>
+                  handleDeleteApplication(workspaceSessionKey, id)
+                }
+                onSelectApplicationForInterview={(app) =>
+                  handleSelectApplicationForInterview(workspaceSessionKey, app)
+                }
+                onOpenNewJobAnalysis={() => {
+                  if (isCurrentWorkspaceAction(workspaceSessionKey)) setActiveTab('analyzer');
+                }}
+                onUpdateNotes={(id, notes, nextActionDate, nextActionNote) =>
+                  handleUpdateNotes(
+                    workspaceSessionKey,
+                    id,
+                    notes,
+                    nextActionDate,
+                    nextActionNote,
+                  )
+                }
+              />
+            )}
 
-        {activeTab === 'interview' && (
-          <InterviewStudioView
-            applications={applications}
-            activeJob={activeJob}
-            activeAnalysis={activeAnalysis}
-            userProfile={userProfile}
-            onUpdateApplication={handleUpdateApplication}
-            onSelectJob={(job, analysis) => {
-              setActiveJob(job);
-              if (analysis) setActiveAnalysis(analysis);
-            }}
-          />
-        )}
+            {activeTab === 'interview' && (
+              <InterviewStudioView
+                applications={applications}
+                activeJob={activeJob}
+                activeAnalysis={activeAnalysis}
+                userProfile={userProfile}
+                onUpdateApplication={(app) =>
+                  handleUpdateApplication(workspaceSessionKey, app)
+                }
+                onSelectJob={(job, analysis) => {
+                  if (!isCurrentWorkspaceAction(workspaceSessionKey)) return;
+                  setActiveJob(job);
+                  setActiveAnalysis(analysis || null);
+                }}
+              />
+            )}
 
-        {activeTab === 'vault' && (
-          <VerifiedProfileVaultView
-            userProfile={userProfile}
-            onUpdateProfile={handleUpdateProfile}
-          />
+            {activeTab === 'vault' && (
+              <VerifiedProfileVaultView
+                userProfile={userProfile}
+                onUpdateProfile={(updated) =>
+                  handleUpdateProfile(workspaceSessionKey, updated)
+                }
+              />
+            )}
+          </>
         )}
       </main>
 
