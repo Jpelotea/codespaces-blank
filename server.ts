@@ -132,7 +132,7 @@ function sendInternalError(res: express.Response, error: unknown, publicMessage:
   }
   if (error instanceof ProfileAccessError) {
     return res.status(503).json({
-      error: 'Verified profile is temporarily unavailable. Please try again later.',
+      error: 'User profile is temporarily unavailable. Please try again later.',
       code: 'PROFILE_UNAVAILABLE'
     });
   }

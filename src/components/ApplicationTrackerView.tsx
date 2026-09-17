@@ -533,7 +533,7 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-slate-500 uppercase block mb-1">
-                  Verified Match Score
+                  Match Score
                 </label>
                 <div className="text-lg font-bold text-indigo-700 flex items-center gap-1.5">
                   <span>{selectedAppModal.fitScore} / 100</span>

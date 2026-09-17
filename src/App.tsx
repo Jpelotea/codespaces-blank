@@ -533,7 +533,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-700">AI Job Application Copilot</span>
             <span>•</span>
-            <span>Zero-Hallucination Verified Truth Engine</span>
+            <span>Profile Evidence &amp; AI-Assisted Workflow</span>
             <span>•</span>
             <span className="text-emerald-700 font-medium flex items-center gap-1">
               <Cloud className="w-3 h-3" />

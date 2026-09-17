@@ -150,7 +150,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {mode === 'reset' && 'Reset your password'}
           </h3>
           <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            Access your private Verified Vault, synchronized applications pipeline, and tailored materials on any device. Guest mode is temporary and not synced to a permanent account.
+            Access your private professional profile, evidence statuses, synchronized applications pipeline, and tailored materials on any device. Guest mode is temporary and not synced to a permanent account.
           </p>
         </div>
 
