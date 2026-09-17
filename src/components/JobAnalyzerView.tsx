@@ -154,13 +154,13 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
         <div className="relative z-10 max-w-3xl">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 mb-3">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            Verified Job-Fit Match & AI Tailor Engine
+            Job-Fit Analysis &amp; AI Tailoring
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-2">
             Target Job Analysis & Tailored Application Hub
           </h1>
           <p className="text-slate-300 text-sm sm:text-base leading-relaxed mb-4">
-            Paste any job description or select a role template. The copilot cross-references your verified experience vault, calculates a factual match score, identifies gaps with honest bridge strategies, and crafts tailored resume bullets, cover letters, and screening answers—without ever inventing qualifications.
+            Compare a job description with your professional profile, identify strengths and gaps, and generate AI-assisted application materials for review. Your profile tracks Draft, User Confirmed, and Source Backed evidence separately.
           </p>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -303,7 +303,7 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
               {isAnalyzing ? (
                 <>
                   <RotateCw className="w-4 h-4 animate-spin text-white" />
-                  <span>Evaluating Fit Against Verified Vault...</span>
+                  <span>Evaluating Fit Against Your Profile...</span>
                 </>
               ) : (
                 <>
@@ -316,9 +316,9 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
             <div className="flex items-center justify-between text-xs text-slate-500 px-1">
               <span className="flex items-center gap-1 text-emerald-700 font-medium">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                Vault: {userProfile.workExperiences.length} verified roles, {userProfile.portfolioProjects.length} projects
+                Profile: {userProfile.workExperiences.length} roles, {userProfile.portfolioProjects.length} projects
               </span>
-              <span>Zero Hallucination</span>
+              <span>Review AI output</span>
             </div>
           </div>
         </div>
@@ -332,7 +332,7 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
               </div>
               <h3 className="text-lg font-bold text-slate-900 mb-1">Ready for Job Fit Analysis</h3>
               <p className="text-sm text-slate-500 max-w-md mx-auto mb-6">
-                Click <strong>"Analyze Job Fit & Strengths"</strong> to calculate your match score, map exact verified achievements to the job requirements, and detect any gaps with an honest bridge strategy.
+                Click <strong>"Analyze Job Fit & Strengths"</strong> to compare your profile information with the job requirements and identify strengths and gaps.
               </p>
               <button
                 onClick={handleRunAnalysis}
@@ -348,9 +348,9 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
             <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center space-y-4">
               <div className="w-12 h-12 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin mx-auto" />
               <div className="space-y-1">
-                <h4 className="font-semibold text-slate-900 text-base">Running Ground-Truth Match Engine</h4>
+                <h4 className="font-semibold text-slate-900 text-base">Analyzing Role Fit</h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Cross-referencing {userProfile.workExperiences.length} work histories, {userProfile.portfolioProjects.length} portfolio items, and verified operational skills against job requirements...
+                  Comparing {userProfile.workExperiences.length} work histories, {userProfile.portfolioProjects.length} portfolio items, and profile skills with the job requirements...
                 </p>
               </div>
             </div>
@@ -464,11 +464,11 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
 
               {/* Strengths & Gap Analysis Section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Verified Strengths */}
+                {/* Profile strengths */}
                 <div className="bg-white rounded-2xl border border-emerald-200 p-4 shadow-xs">
                   <div className="flex items-center gap-2 text-emerald-800 font-semibold text-sm mb-3">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Verified Strengths ({analysis.strengths.length})</span>
+                    <span>Profile Strengths ({analysis.strengths.length})</span>
                   </div>
                   <div className="space-y-3">
                     {analysis.strengths.map((s, idx) => (
@@ -495,7 +495,7 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
                       <span>Identified Gaps ({analysis.gaps.length})</span>
                     </div>
                     <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                      Zero-Hallucination Policy
+                      Review gaps carefully
                     </span>
                   </div>
                   <div className="space-y-3">
@@ -563,7 +563,7 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
                   <div>
                     <h3 className="font-bold text-slate-900 text-base">Tailored Application Materials</h3>
                     <p className="text-xs text-slate-500">
-                      Craft role-tailored resume bullets, cover letters, and screening answers using verified proof points.
+                      Create role-tailored resume bullets, cover letters, and screening answers using your profile as context. Review all generated content before submission.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -666,7 +666,7 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
                         </div>
 
                         <div>
-                          <span className="font-semibold text-slate-900 block mb-2">Role-Aligned Verified Bullet Points</span>
+                          <span className="font-semibold text-slate-900 block mb-2">Role-Aligned Bullet Points</span>
                           <div className="space-y-3">
                             {materials.resume.alignedRoleBullets.map((item, idx) => (
                               <div key={idx} className="border border-slate-200 rounded-xl p-3 bg-white space-y-1.5">
@@ -751,7 +751,7 @@ export const JobAnalyzerView: React.FC<JobAnalyzerViewProps> = ({
                             </div>
                             <div className="text-[11px] text-emerald-700 font-medium flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              <span>Verified Basis: {ans.verifiedBackingDetail}</span>
+                              <span>Profile Basis: {ans.verifiedBackingDetail}</span>
                             </div>
                           </div>
                         ))}

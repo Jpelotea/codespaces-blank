@@ -209,15 +209,15 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
         <div className="space-y-1 max-w-2xl">
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-              Verified Professional Vault & Ground Truth
+              Professional Profile &amp; Evidence
             </h2>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Anti-Hallucination Safe
+              Evidence Status Tracked
             </span>
           </div>
           <p className="text-xs text-slate-600 leading-relaxed">
-            All AI tailoring, resume bullet generation, and interview guidance are strictly constrained to the items below. The Copilot will never fabricate experience, employers, or metrics you have not verified here.
+            Review your professional information and track whether each item is Draft, User Confirmed, or Source Backed. Review AI-generated materials before using them.
           </p>
         </div>
 
@@ -770,7 +770,7 @@ export const VerifiedProfileVaultView: React.FC<VerifiedProfileVaultViewProps> =
       {activeTab === 'answerBank' && (
         <div className="space-y-4">
           <div className="text-xs text-slate-500">
-            Pre-verified answers to tough screening questions. The AI uses these authentic anecdotes when drafting application questions.
+            Store screening-answer examples and confirm each one individually when it accurately reflects your experience.
           </div>
           <div className="space-y-3">
             {profileState.answerBank.length === 0 && (

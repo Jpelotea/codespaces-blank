@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 hidden md:block">
-                Personal account sync, zero-hallucination job-fit & interview prep
+                Personal account sync, AI-assisted job-fit & interview prep
               </p>
             </div>
           </div>
@@ -96,13 +96,13 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
 
-            {/* Anti-Hallucination Protection Badge */}
+            {/* Professional evidence status badge */}
             <div 
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/80"
-              title="Only real achievements and metrics from your verified vault are used in generated materials."
+              title="Track Draft, User Confirmed, and Source Backed professional information."
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Verified Truth</span>
+              <span>Profile Evidence</span>
             </div>
 
             {/* AI Engine Status */}
@@ -178,7 +178,7 @@ export const Header: React.FC<HeaderProps> = ({
                       className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
                     >
                       <UserCheck className="w-4 h-4 text-indigo-600" />
-                      <span>Edit Verified Profile Vault</span>
+                      <span>Edit Profile &amp; Evidence</span>
                     </button>
 
                     <button
@@ -274,7 +274,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <UserCheck className="w-4 h-4" />
-            <span>Verified Profile Vault</span>
+            <span>Profile &amp; Evidence</span>
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
           </button>
         </div>

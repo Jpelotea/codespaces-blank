@@ -73,7 +73,7 @@ export interface UserProfile {
   targetRoles: string[];
   yearsExperience?: number;
   executiveSummary: string;
-  verifiedOnlyMode: boolean; // strictly forbids hallucinating or inventing experiences
+  verifiedOnlyMode: boolean; // legacy profile preference; does not establish evidence status or guarantee AI behavior
   workExperiences: WorkExperience[];
   skillCategories: SkillCategory[];
   portfolioProjects: PortfolioProject[];

@@ -163,7 +163,7 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Role-specific behavioral questions, executive scenario simulations, and smart candidate questions—all backed by your verified experiences. Plus, 1-click tailored post-interview thank you and follow-up email drafts.
+            Role-specific behavioral questions, executive scenario simulations, and smart candidate questions using your professional profile as context. Plus, 1-click AI-assisted post-interview thank you and follow-up email drafts for review.
           </p>
         </div>
 
@@ -234,7 +234,7 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
                 </div>
                 <h4 className="font-bold text-slate-900 text-sm">No Prep Plan Generated Yet</h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Click <strong>"Generate Prep Plan"</strong> to predict behavioral questions for {currentJob?.title || 'this role'} and synthesize custom STAR answers using your real accomplishments.
+                  Click <strong>"Generate Prep Plan"</strong> to predict behavioral questions for {currentJob?.title || 'this role'} and draft custom STAR answers using your profile information for context.
                 </p>
                 <button
                   onClick={handleGeneratePrep}
@@ -249,7 +249,7 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
               <div className="p-10 text-center space-y-3">
                 <div className="w-10 h-10 rounded-full border-4 border-purple-200 border-t-purple-600 animate-spin mx-auto" />
                 <p className="text-xs text-slate-500 font-medium">
-                  Formulating predicted questions and mapping verified achievements to the STAR framework...
+                  Formulating predicted questions and mapping relevant profile experience to the STAR framework...
                 </p>
               </div>
             )}
@@ -318,7 +318,7 @@ export const InterviewStudioView: React.FC<InterviewStudioViewProps> = ({
                         </div>
                         <div className="p-2.5 rounded-xl bg-indigo-50/50 border border-indigo-100 sm:col-span-2">
                           <span className="font-bold text-indigo-950 block mb-0.5 text-[10px] uppercase text-indigo-700">
-                            [A] Action Taken (Verified Method)
+                            [A] Action / Approach
                           </span>
                           <p className="text-indigo-950 leading-relaxed">{q.starAnswer.action}</p>
                         </div>

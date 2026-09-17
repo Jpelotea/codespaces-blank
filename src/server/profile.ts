@@ -28,7 +28,7 @@ export async function getVerifiedUserProfile(userId: string): Promise<UserProfil
     const snapshot = await profileRef.get();
 
     if (!snapshot.exists) {
-      throw new ProfileAccessError('Verified user profile is not available');
+      throw new ProfileAccessError('User profile is not available');
     }
 
     const profile = snapshot.data();
@@ -40,6 +40,6 @@ export async function getVerifiedUserProfile(userId: string): Promise<UserProfil
     return profile as UserProfile;
   } catch (error) {
     if (error instanceof ProfileAccessError) throw error;
-    throw new ProfileAccessError('Verified user profile could not be loaded');
+    throw new ProfileAccessError('User profile could not be loaded');
   }
 }

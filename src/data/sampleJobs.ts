@@ -98,7 +98,7 @@ Requirements:
       "Practical experience using AI tools for research, drafting & summaries",
       "CRM updates and executive calendar scheduling",
       "Lightweight automation skills with Zapier or Slack bots",
-      "Meticulous attention to detail and zero-hallucination verification"
+      "Meticulous attention to detail and careful factual review"
     ],
     detectedTechStack: ["Gemini", "Zapier", "Notion", "Slack", "HubSpot", "Google Workspace"]
   }
