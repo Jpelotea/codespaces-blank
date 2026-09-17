@@ -1,0 +1,78 @@
+name: Phase 3A validation
+
+on:
+  push:
+    branches:
+      - phase3/evidence-qualified-ai-context
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Record tool versions
+        run: |
+          node --version
+          npm --version
+
+      - name: Verify reviewed source files are unchanged
+        run: |
+          git diff --exit-code 46cf644cc5b017c2d1801138734ebc90a7d68151 HEAD -- \
+            server.ts \
+            src/server/aiEvidenceContext.test.ts \
+            src/server/aiEvidenceContext.ts \
+            src/server/profile.ts
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run targeted Phase 3A and regression tests
+        run: >-
+          npx --no-install vitest run
+          src/server/aiEvidenceContext.test.ts
+          src/lib/profileEvidence.test.ts
+          src/server/security.test.ts
+          src/lib/workspaceSession.test.ts
+
+      - name: Run full Vitest suite
+        run: npm test
+
+      - name: Run project TypeScript typecheck
+        run: npm run lint
+
+      - name: Build client production bundle
+        run: npx --no-install vite build
+
+      - name: Build server production bundle
+        run: >-
+          npx --no-install esbuild server.ts
+          --bundle
+          --platform=node
+          --format=cjs
+          --packages=external
+          --sourcemap
+          --outfile=dist/server.cjs
+
+      - name: Run repository production build script
+        run: npm run build
+
+      - name: Whitespace and diff validation
+        run: git diff --check 6dd4f2b7ebe6511a8e4deb37a78c137723d6b837 HEAD
