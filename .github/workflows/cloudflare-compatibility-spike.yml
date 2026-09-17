@@ -24,6 +24,12 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Set up JDK 21 for Firebase emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Install repository dependencies
         run: npm ci
 
