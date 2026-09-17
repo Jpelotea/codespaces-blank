@@ -8,8 +8,7 @@ import {
   JobFitAnalysis,
   TailoredMaterials
 } from './types';
-import { INITIAL_USER_PROFILE } from './data/defaultProfile';
-import { INITIAL_SAMPLE_APPLICATIONS, SAMPLE_JOB_PRESETS } from './data/sampleJobs';
+import { SAMPLE_JOB_PRESETS } from './data/sampleJobs';
 import { Header } from './components/Header';
 import { AuthModal } from './components/AuthModal';
 import { JobAnalyzerView } from './components/JobAnalyzerView';
@@ -32,6 +31,8 @@ import {
   isWorkspaceSessionCurrent,
   shouldApplyWorkspaceLoad,
 } from './lib/workspaceSession';
+import { createBlankUserProfile } from './lib/profileEvidence';
+import { createWorkspaceBoundaryData } from './lib/workspaceData';
 import { Cloud, ArrowRight } from 'lucide-react';
 
 const getProfileStorageKey = (uid?: string | null) => `ai_job_copilot_profile_${uid ?? 'guest'}`;
@@ -65,10 +66,10 @@ export default function App() {
   const [hasGeminiKey, setHasGeminiKey] = useState<boolean>(true);
 
   // User Profile state
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => INITIAL_USER_PROFILE);
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => createWorkspaceBoundaryData(null).profile);
 
   // Applications pipeline state
-  const [applications, setApplications] = useState<ApplicationRecord[]>(() => INITIAL_SAMPLE_APPLICATIONS);
+  const [applications, setApplications] = useState<ApplicationRecord[]>(() => createWorkspaceBoundaryData(null).applications);
 
   // Current active job & analysis selected for cross-tab workflows
   const [activeJob, setActiveJob] = useState<JobPosting | null>(SAMPLE_JOB_PRESETS[0]);
@@ -105,13 +106,14 @@ export default function App() {
       // state is cleared by the workspaceSessionKey remount below.
       setActiveJob(null);
       setActiveAnalysis(null);
-      setUserProfile(INITIAL_USER_PROFILE);
-      setApplications(user && !user.isAnonymous ? [] : INITIAL_SAMPLE_APPLICATIONS);
+      const boundaryWorkspace = createWorkspaceBoundaryData(user);
+      setUserProfile(boundaryWorkspace.profile);
+      setApplications(boundaryWorkspace.applications);
 
       if (user && !user.isAnonymous) {
         setIsSyncing(true);
         try {
-          const { profile, applications: userApps } = await initializeUserWorkspace(user, true);
+          const { profile, applications: userApps } = await initializeUserWorkspace(user);
           if (!shouldApplyWorkspaceLoad(
             changeId,
             authChangeId,
@@ -122,7 +124,7 @@ export default function App() {
           workspaceOwnerUidRef.current = user.uid;
           setWorkspaceOwnerUid(user.uid);
           setUserProfile(profile);
-          setApplications(userApps.length > 0 ? userApps : INITIAL_SAMPLE_APPLICATIONS);
+          setApplications(userApps);
           clearSensitiveStorage(user.uid);
         } catch (err) {
           if (changeId === authChangeId) {
@@ -135,7 +137,7 @@ export default function App() {
           }
         }
       } else {
-        // Guest sessions and logged-out state use only the privacy-safe preview sandbox.
+        // Guest sessions and logged-out state use only the non-persistent demo workspace.
         clearSensitiveStorage(user?.uid);
         setAuthLoading(false);
       }
@@ -369,7 +371,7 @@ export default function App() {
     setAuthLoading(true);
     setActiveJob(null);
     setActiveAnalysis(null);
-    setUserProfile(INITIAL_USER_PROFILE);
+    setUserProfile(createBlankUserProfile());
     setApplications([]);
 
     try {
@@ -384,6 +386,8 @@ export default function App() {
     setAuthModalMode(mode);
     setIsAuthModalOpen(true);
   };
+
+  const isDemoWorkspace = !currentUser || currentUser.isAnonymous;
 
   return (
     <div className="min-h-screen bg-slate-100/60 text-slate-900 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-800">
@@ -401,13 +405,14 @@ export default function App() {
       />
 
       {/* Guest / Logged Out Onboarding Banner */}
-      {!currentUser && !authLoading && (
+      {isDemoWorkspace && !authLoading && (
         <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white border-b border-indigo-800/40 py-2.5 px-4">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
               <span className="font-medium text-slate-200">
-                You're in preview mode. <strong>Sign in to your personal account</strong> to save and sync your verified profile, custom materials, and job pipeline securely in Firebase.
+                <strong>Demo workspace — sample data, not part of your profile.</strong>{' '}
+                Changes are temporary and are not saved to a personal workspace.
               </span>
             </div>
             <div className="flex items-center gap-2">
