@@ -208,8 +208,24 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
         </div>
       </div>
 
+      {applications.length === 0 && (
+        <div className="bg-white rounded-2xl border border-dashed border-slate-300 px-6 py-12 text-center shadow-2xs">
+          <Layers className="w-9 h-9 text-indigo-400 mx-auto mb-3" />
+          <h2 className="text-base font-bold text-slate-900">No applications yet</h2>
+          <p className="text-sm text-slate-500 mt-1 mb-4">
+            Your personal pipeline will show only roles you choose to track.
+          </p>
+          <button
+            onClick={onOpenNewJobAnalysis}
+            className="px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition shadow-xs"
+          >
+            Analyze a role
+          </button>
+        </div>
+      )}
+
       {/* Main Board View (Kanban) */}
-      {viewMode === 'kanban' && (
+      {applications.length > 0 && viewMode === 'kanban' && (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 overflow-x-auto pb-4">
           {STAGES.slice(0, 6).map((stage) => {
             const stageApps = filteredApps.filter(a => a.status === stage.key);
@@ -330,7 +346,7 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
       )}
 
       {/* Table / List View */}
-      {viewMode === 'list' && (
+      {applications.length > 0 && viewMode === 'list' && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-2xs">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">

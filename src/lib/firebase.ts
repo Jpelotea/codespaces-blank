@@ -25,8 +25,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { UserProfile, ApplicationRecord } from '../types';
-import { INITIAL_USER_PROFILE } from '../data/defaultProfile';
-import { INITIAL_SAMPLE_APPLICATIONS } from '../data/sampleJobs';
+import { initializePersonalWorkspace } from './workspaceData';
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -86,7 +85,7 @@ export async function getUserProfileFromFirestore(userId: string): Promise<UserP
     return null;
   } catch (err) {
     console.warn('Firestore profile fetch warning:', err);
-    return null;
+    throw err;
   }
 }
 
@@ -115,7 +114,7 @@ export async function getApplicationsFromFirestore(userId: string): Promise<Appl
     return records;
   } catch (err) {
     console.warn('Firestore applications fetch warning:', err);
-    return [];
+    throw err;
   }
 }
 
@@ -143,30 +142,13 @@ export async function deleteApplicationFromFirestore(userId: string, appId: stri
 }
 
 // Initialize New User Workspace
-export async function initializeUserWorkspace(user: User, preferSampleData: boolean = false): Promise<{
+export async function initializeUserWorkspace(user: User): Promise<{
   profile: UserProfile;
   applications: ApplicationRecord[];
 }> {
-  const existingProfile = await getUserProfileFromFirestore(user.uid);
-  if (existingProfile) {
-    const existingApps = await getApplicationsFromFirestore(user.uid);
-    return { profile: existingProfile, applications: existingApps };
-  }
-
-  // Brand new user: set up their profile customized to their authenticated account
-  const newProfile: UserProfile = {
-    ...INITIAL_USER_PROFILE,
-    name: user.displayName || user.email?.split('@')[0] || 'Professional User',
-    email: user.email || INITIAL_USER_PROFILE.email
-  };
-
-  await saveUserProfileToFirestore(user.uid, newProfile);
-
-  // If user opted to seed with sample applications
-  const starterApps = preferSampleData ? INITIAL_SAMPLE_APPLICATIONS : [];
-  for (const app of starterApps) {
-    await saveApplicationToFirestore(user.uid, app);
-  }
-
-  return { profile: newProfile, applications: starterApps };
+  return initializePersonalWorkspace(user, {
+    getProfile: getUserProfileFromFirestore,
+    saveProfile: saveUserProfileToFirestore,
+    getApplications: getApplicationsFromFirestore,
+  });
 }
