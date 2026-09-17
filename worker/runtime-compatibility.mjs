@@ -23,7 +23,7 @@ function classifyError(error) {
     messageCategory:
       /api key|invalid_argument|permission|unauth|forbidden|400|401|403/i.test(message)
         ? 'provider-or-auth-response'
-        : /not implemented|unsupported|not supported|proxy|color depth|stream|process\.stderr/i.test(message)
+        : /not implemented|unsupported|not supported|proxy|color depth|stream|process\.stderr|grpc|socket/i.test(message)
           ? 'runtime-compatibility-error'
           : 'other-error',
   };
@@ -111,6 +111,53 @@ async function joseProbe() {
   };
 }
 
+async function firebaseAdminProbe() {
+  const started = performance.now();
+  try {
+    const appModule = await import('firebase-admin/app');
+    const authModule = await import('firebase-admin/auth');
+    const firestoreModule = await import('firebase-admin/firestore');
+
+    return {
+      ok: true,
+      appImport: typeof appModule.initializeApp === 'function',
+      authImport: typeof authModule.getAuth === 'function',
+      firestoreImport: typeof firestoreModule.getFirestore === 'function',
+      initializationAttempted: false,
+      note: 'Import compatibility only; trusted Firestore read requires credentials/emulator proof.',
+      elapsedMs: Number((performance.now() - started).toFixed(3)),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      ...classifyError(error),
+      elapsedMs: Number((performance.now() - started).toFixed(3)),
+    };
+  }
+}
+
+async function expressProbe() {
+  const started = performance.now();
+  try {
+    const expressModule = await import('express');
+    const rateLimitModule = await import('express-rate-limit');
+    return {
+      ok: true,
+      expressImport: typeof expressModule.default === 'function',
+      rateLimitImport:
+        typeof rateLimitModule.default === 'function' || typeof rateLimitModule.rateLimit === 'function',
+      note: 'Import success does not prove Node HTTP server/app.listen compatibility; Worker transport remains fetch-based.',
+      elapsedMs: Number((performance.now() - started).toFixed(3)),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      ...classifyError(error),
+      elapsedMs: Number((performance.now() - started).toFixed(3)),
+    };
+  }
+}
+
 async function genaiProbe(env) {
   const secretPresent = typeof env.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.length > 0;
   const secretVisibleViaProcessEnv =
@@ -167,16 +214,20 @@ export default {
     const url = new URL(request.url);
 
     try {
-      if (url.pathname === '/compat/runtime') {
-        return json(await runtimeProbe(env));
-      }
+      if (url.pathname === '/compat/runtime') return json(await runtimeProbe(env));
+      if (url.pathname === '/compat/jose') return json(await joseProbe());
+      if (url.pathname === '/compat/firebase-admin') return json(await firebaseAdminProbe());
+      if (url.pathname === '/compat/express') return json(await expressProbe());
+      if (url.pathname === '/compat/genai') return json(await genaiProbe(env));
 
-      if (url.pathname === '/compat/jose') {
-        return json(await joseProbe());
-      }
-
-      if (url.pathname === '/compat/genai') {
-        return json(await genaiProbe(env));
+      if (url.pathname.startsWith('/api/')) {
+        return json({
+          ok: true,
+          transport: 'cloudflare-worker-fixture',
+          method: request.method,
+          path: url.pathname,
+          authorizationHeaderPresent: request.headers.has('authorization'),
+        });
       }
 
       return json({ error: 'not found' }, 404);
