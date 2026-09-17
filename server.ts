@@ -9,7 +9,11 @@ import {
   sanitizeText, 
   formatUntrustedJobContext 
 } from './src/server/security';
-import { ProfileAccessError, getVerifiedUserProfile } from './src/server/profile';
+import { ProfileAccessError, getUserProfile } from './src/server/profile';
+import {
+  buildAiEvidenceContext,
+  formatAiEvidenceContextForPrompt,
+} from './src/server/aiEvidenceContext';
 import {
   validateJobFitAnalysis,
   validateTailoredMaterials,
@@ -213,35 +217,25 @@ app.post('/api/analyze-job', requireAuth, aiRateLimiter, async (req, res) => {
     const jobTitle = sanitizeText(payload['jobTitle'], 200) || 'Target Role';
     const company = sanitizeText(payload['company'], 200) || 'Company';
     const jobDescription = sanitizeText(rawDesc, 12000);
-    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const userProfile = await getUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const aiEvidenceSelection = buildAiEvidenceContext(userProfile);
 
     const ai = getGeminiClient();
     if (ai) {
       const untrustedJobBlock = formatUntrustedJobContext(jobTitle, company, jobDescription);
+      const aiEvidencePrompt = formatAiEvidenceContextForPrompt(aiEvidenceSelection, ['professionalClaims', 'workExperiences', 'skillCategories', 'portfolioProjects']);
       const prompt = `You are an expert AI Career Strategist and Hiring Consultant specializing in high-level Remote Virtual Assistants, Executive Assistants, Business Operations Leads, and AI-assisted Workflow Specialists.
 
 You are evaluating a candidate's fit for a specific job.
 
 CRITICAL INTEGRITY & PROVENANCE INSTRUCTION:
-You MUST NOT invent, exaggerate, or hallucinate any qualification, company name, metric, or past experience not present in the candidate's verified profile.
-All matched strengths must cite REAL items from the verified profile.
-Every strength MUST include a status classification: "MATCH" (fully verified evidence exists), "PARTIAL_MATCH" (adjacent or partial evidence), or "UNKNOWN" (insufficient data).
-If a requirement is not met by the profile, you MUST classify it as a Gap with an honest, realistic bridge strategy rather than claiming they have it.
+You MUST NOT invent, exaggerate, or hallucinate any qualification, company name, metric, or past experience not present in the candidate's eligible professional evidence below.
+All matched strengths must cite REAL items from the eligible professional evidence.
+Every strength MUST include a status classification: "MATCH" (eligible evidence directly supports the requirement), "PARTIAL_MATCH" (eligible evidence partially supports it), or "UNKNOWN" (insufficient eligible evidence).
+If a requirement is not supported by eligible evidence, classify it as a Gap or UNKNOWN with an honest, realistic bridge strategy rather than claiming the candidate has it.
 
---- CANDIDATE VERIFIED PROFILE ---
-Name: ${userProfile['name'] || 'Candidate'}
-Headline: ${userProfile['headline'] || ''}
-Experience Summary: ${userProfile['executiveSummary'] || ''}
-Years Experience: ${userProfile['yearsExperience'] || 5}
-
-Verified Work Experience:
-${JSON.stringify(userProfile['workExperiences'] || [], null, 2)}
-
-Verified Skills:
-${JSON.stringify(userProfile['skillCategories'] || [], null, 2)}
-
-Verified Portfolio Projects:
-${JSON.stringify(userProfile['portfolioProjects'] || [], null, 2)}
+--- CANDIDATE ELIGIBLE PROFESSIONAL EVIDENCE ---
+${aiEvidencePrompt}
 
 --- TARGET JOB DETAILS ---
 ${untrustedJobBlock}
@@ -259,8 +253,8 @@ Respond strictly with a JSON object matching this TypeScript structure:
   "strengths": [
     {
       "requirement": string (extracted requirement from the job posting),
-      "matchingExperience": string (concrete factual evidence from verified profile),
-      "sourceContext": string (e.g. "From Vanguard Tech Partners role" or "Project: Executive Daily AI Briefing"),
+      "matchingExperience": string (concrete factual evidence from eligible professional evidence),
+      "sourceContext": string (e.g. "From an eligible role" or "From an eligible portfolio project"),
       "status": "MATCH" | "PARTIAL_MATCH" | "UNKNOWN"
     }
   ],
@@ -273,9 +267,9 @@ Respond strictly with a JSON object matching this TypeScript structure:
   ],
   "recommendedProjects": [
     {
-      "projectId": string (id from candidate's verified portfolio),
+      "projectId": string (id from candidate's eligible portfolio evidence),
       "projectTitle": string,
-      "whyRelevant": string (why this specific deliverable proves they can succeed in this role)
+      "whyRelevant": string (why this specific deliverable supports success in this role)
     }
   ],
   "strategicAdvice": [
@@ -386,35 +380,22 @@ app.post('/api/generate-materials', requireAuth, aiRateLimiter, async (req, res)
     const jobTitle = sanitizeText(payload['jobTitle'], 200) || 'Role';
     const company = sanitizeText(payload['company'], 200) || 'Company';
     const jobDescription = sanitizeText(payload['jobDescription'], 12000);
-    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const userProfile = await getUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const aiEvidenceSelection = buildAiEvidenceContext(userProfile);
     const pitchType = sanitizeText(payload['pitchType'], 50) || 'executive_formal';
 
     const ai = getGeminiClient();
     if (ai) {
       const untrustedJobBlock = formatUntrustedJobContext(jobTitle, company, jobDescription);
+      const aiEvidencePrompt = formatAiEvidenceContextForPrompt(aiEvidenceSelection, ['professionalClaims', 'workExperiences', 'skillCategories', 'portfolioProjects']);
       const prompt = `You are an elite Career Copilot for top-tier Remote Executive Assistants, Business Operations Managers, and AI Workflow Specialists.
 Generate completely tailored application materials for this candidate applying to this specific role.
 
 STRICT INTEGRITY RULE:
-DO NOT INVENT WORK EXPERIENCE, METRICS, CLIENTS, OR QUALIFICATIONS. Every statement must be derived from the candidate's verified profile below.
+DO NOT INVENT WORK EXPERIENCE, METRICS, CLIENTS, OR QUALIFICATIONS. Every factual statement about the candidate must be derived from the eligible professional evidence below. If evidence is absent, omit the claim rather than inferring it.
 
---- CANDIDATE VERIFIED PROFILE ---
-Name: ${userProfile['name'] || 'Candidate'}
-Headline: ${userProfile['headline'] || ''}
-Email: ${userProfile['email'] || ''}
-Phone: ${userProfile['phone'] || ''}
-Location: ${userProfile['location'] || ''}
-Timezone: ${userProfile['timezone'] || ''}
-Summary: ${userProfile['executiveSummary'] || ''}
-
-Verified Work Experience:
-${JSON.stringify(userProfile['workExperiences'] || [], null, 2)}
-
-Verified Skills:
-${JSON.stringify(userProfile['skillCategories'] || [], null, 2)}
-
-Verified Portfolio Projects:
-${JSON.stringify(userProfile['portfolioProjects'] || [], null, 2)}
+--- CANDIDATE ELIGIBLE PROFESSIONAL EVIDENCE ---
+${aiEvidencePrompt}
 
 --- TARGET JOB DETAILS ---
 ${untrustedJobBlock}
@@ -425,27 +406,27 @@ PITCH TYPE REQUESTED: ${pitchType}
 Respond strictly with a JSON object matching this structure:
 {
   "resume": {
-    "targetedSummary": string (a 3-4 sentence high-impact summary tailored precisely to this role's keywords while strictly reflecting candidate's true background),
-    "highlightedCoreSkills": [string] (top 8-10 most relevant verified skills),
+    "targetedSummary": string (a 3-4 sentence high-impact summary tailored precisely to this role's keywords while strictly reflecting candidate's eligible evidence),
+    "highlightedCoreSkills": [string] (top 8-10 most relevant eligible skills),
     "alignedRoleBullets": [
       {
         "roleTitle": string,
         "company": string,
-        "bullets": [string] (3-4 bullet points per role highlighting verified metrics that matter most to this employer)
+        "bullets": [string] (3-4 bullet points per role using only metrics present in eligible evidence)
       }
     ],
-    "atsKeywords": [string] (6-8 keywords extracted from the job description that candidate legitimately satisfies)
+    "atsKeywords": [string] (6-8 keywords extracted from the job description that candidate's eligible evidence legitimately supports)
   },
   "coverLetter": {
     "pitchType": "${pitchType}",
     "subjectLine": string,
-    "letterBody": string (complete, compelling, beautifully formatted letter with salutation, hook, 2 body paragraphs citing verified projects/metrics, and closing call-to-action)
+    "letterBody": string (complete, compelling, beautifully formatted letter with salutation, hook, 2 body paragraphs citing eligible projects/metrics when available, and closing call-to-action)
   },
   "screeningAnswers": [
     {
       "question": string (e.g. "Why are you interested in this role and what makes you uniquely suited?"),
-      "tailoredAnswer": string (substantive, professional 1-paragraph response grounded in verified facts),
-      "verifiedBackingDetail": string (the specific proof point from the profile)
+      "tailoredAnswer": string (substantive, professional 1-paragraph response grounded in eligible evidence),
+      "verifiedBackingDetail": string (the specific eligible proof point from the profile)
     },
     {
       "question": string (e.g. "How do you prioritize competing deadlines across executives or clients?"),
@@ -463,7 +444,7 @@ Respond strictly with a JSON object matching this structure:
       try {
         const text = await generateWithFallback(ai, prompt, 0.3);
         const parsed = JSON.parse(cleanJsonText(text));
-        parsed.disclaimer = 'Generated strictly from your verified profile vault. Always review, proofread, and verify details before submitting.';
+        parsed.disclaimer = 'Generated from your eligible profile evidence. Always review, proofread, and verify details before submitting.';
         parsed.generatedAt = new Date().toISOString();
         const materialsValidation = validateTailoredMaterials(parsed);
         if (!materialsValidation.ok) throw new Error(materialsValidation.error || 'Invalid AI materials payload');
@@ -572,27 +553,24 @@ app.post('/api/interview-prep', requireAuth, aiRateLimiter, async (req, res) => 
     const jobTitle = sanitizeText(payload.jobTitle, 200) || 'Role';
     const company = sanitizeText(payload.company, 200) || 'Company';
     const jobDescription = sanitizeText(payload.jobDescription, 12000);
-    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const userProfile = await getUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const aiEvidenceSelection = buildAiEvidenceContext(userProfile);
 
     const ai = getGeminiClient();
     if (ai) {
       const untrustedJobBlock = formatUntrustedJobContext(jobTitle, company, jobDescription);
+      const aiEvidencePrompt = formatAiEvidenceContextForPrompt(aiEvidenceSelection, ['workExperiences', 'portfolioProjects', 'answerBank']);
       const prompt = `You are an executive hiring coach preparing a candidate for an intensive interview for:
 Role: ${jobTitle}
 Company: ${company}
 
-Candidate's Verified Profile:
-${JSON.stringify({
-  name: userProfile['name'],
-  workExperiences: userProfile['workExperiences'],
-  portfolioProjects: userProfile['portfolioProjects'],
-  answerBank: userProfile['answerBank']
-}, null, 2)}
+Candidate's Eligible Professional Evidence:
+${aiEvidencePrompt}
 
 Target Job Details:
 ${untrustedJobBlock}
 
-Generate realistic, high-caliber interview prep guidance. Each STAR answer MUST draw directly on the candidate's actual verified experiences.
+Generate realistic, high-caliber interview prep guidance. Each STAR answer MUST draw directly on eligible professional evidence. If eligible evidence is insufficient for a factual STAR example, do not invent missing experience.
 Respond strictly in JSON:
 {
   "roleOverview": string (a crisp 2-sentence summary of what this employer cares most about during the interview),
@@ -736,7 +714,9 @@ app.post('/api/followup-draft', requireAuth, aiRateLimiter, async (req, res) => 
     const company = sanitizeText(payload.company, 200) || 'Company';
     const recipientName = sanitizeText(payload.recipientName, 100);
     const customNotes = sanitizeText(payload.customNotes, 2000);
-    const userProfile = await getVerifiedUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const userProfile = await getUserProfile((req as { user?: { uid: string } }).user!.uid);
+    const aiEvidenceSelection = buildAiEvidenceContext(userProfile);
+    const candidateName = aiEvidenceSelection.context.identity.name || 'Candidate';
 
     const ai = getGeminiClient();
     if (ai) {
@@ -744,7 +724,7 @@ app.post('/api/followup-draft', requireAuth, aiRateLimiter, async (req, res) => 
 Job: ${jobTitle} at ${company}
 Stage: ${stage} (e.g. "Post-Application (5-Day)", "Post-Interview Thank You", "Status Check-In")
 Recipient: ${recipientName || 'Hiring Manager'}
-Candidate Name: ${userProfile.name || 'Candidate'}
+Candidate Name: ${candidateName}
 Custom Notes or Context: ${customNotes || 'Reiterating enthusiasm and key relevant achievements'}
 
 Respond strictly with a JSON object:

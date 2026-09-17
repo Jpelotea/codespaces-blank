@@ -22,7 +22,7 @@ function getAdminFirestore() {
   return getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
 }
 
-export async function getVerifiedUserProfile(userId: string): Promise<UserProfile> {
+export async function getUserProfile(userId: string): Promise<UserProfile> {
   try {
     const profileRef = getAdminFirestore().doc(`users/${userId}/profile/vault`);
     const snapshot = await profileRef.get();
